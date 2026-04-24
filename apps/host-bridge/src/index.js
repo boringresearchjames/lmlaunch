@@ -8,14 +8,14 @@ app.use(express.json({ limit: "2mb" }));
 
 const port = Number(process.env.BRIDGE_PORT || 8090);
 const bridgeToken = process.env.BRIDGE_AUTH_TOKEN || "change-me";
+const bridgeAuthEnabled = Boolean(bridgeToken && bridgeToken !== "change-me");
 const defaultLogLines = Number(process.env.LOG_LINES_DEFAULT || 200);
 const readinessPollMs = Number(process.env.READINESS_POLL_MS || 2000);
 const readinessHttpTimeoutMs = Number(process.env.READINESS_HTTP_TIMEOUT_MS || 5000);
 const smokeCheckEnabled = process.env.SMOKE_CHECK_ENABLED !== "false";
 
-if (!bridgeToken || bridgeToken === "change-me") {
-  console.error("BRIDGE_AUTH_TOKEN must be set to a non-default value.");
-  process.exit(1);
+if (!bridgeAuthEnabled) {
+  console.warn("Bridge auth disabled: BRIDGE_AUTH_TOKEN not set.");
 }
 
 const dataRoot = "/data";
@@ -29,6 +29,10 @@ function isValidInstanceId(value) {
 }
 
 function auth(req, res, next) {
+  if (!bridgeAuthEnabled) {
+    return next();
+  }
+
   const token = req.header("x-bridge-token") || "";
   if (token !== bridgeToken) {
     return res.status(401).json({ error: "Unauthorized bridge token" });

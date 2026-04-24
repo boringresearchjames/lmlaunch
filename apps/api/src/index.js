@@ -26,15 +26,15 @@ const bridgeUrl = process.env.BRIDGE_URL || "http://localhost:8090";
 const bridgeToken = process.env.BRIDGE_AUTH_TOKEN || "change-me";
 const stateFile = process.env.STATE_FILE || "/data/state.json";
 const sharedConfigFile = process.env.SHARED_CONFIG_FILE || "/data/shared-config.yaml";
+const apiAuthEnabled = Boolean(apiToken && apiToken !== "change-me");
+const bridgeAuthEnabled = Boolean(bridgeToken && bridgeToken !== "change-me");
 
-if (!apiToken || apiToken === "change-me") {
-  console.error("API_AUTH_TOKEN must be set to a non-default value.");
-  process.exit(1);
+if (!apiAuthEnabled) {
+  console.warn("API auth disabled: API_AUTH_TOKEN not set.");
 }
 
-if (!bridgeToken || bridgeToken === "change-me") {
-  console.error("BRIDGE_AUTH_TOKEN must be set to a non-default value.");
-  process.exit(1);
+if (!bridgeAuthEnabled) {
+  console.warn("Bridge auth disabled: BRIDGE_AUTH_TOKEN not set.");
 }
 
 const stateDir = path.dirname(stateFile);
@@ -283,6 +283,10 @@ function cleanupSessions() {
 }
 
 function auth(req, res, next) {
+  if (!apiAuthEnabled) {
+    return next();
+  }
+
   const token = getBearerToken(req);
   if (!token) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -307,6 +311,10 @@ function auth(req, res, next) {
 }
 
 function requireAdminToken(req, res, next) {
+  if (!apiAuthEnabled) {
+    return next();
+  }
+
   const token = getBearerToken(req);
   if (token !== apiToken) {
     return res.status(403).json({ error: "Admin token required" });
@@ -315,12 +323,17 @@ function requireAdminToken(req, res, next) {
 }
 
 async function bridgeFetch(method, endpoint, body) {
+  const headers = {
+    "content-type": "application/json"
+  };
+
+  if (bridgeAuthEnabled) {
+    headers["x-bridge-token"] = bridgeToken;
+  }
+
   const response = await fetch(`${bridgeUrl}${endpoint}`, {
     method,
-    headers: {
-      "content-type": "application/json",
-      "x-bridge-token": bridgeToken
-    },
+    headers,
     body: body ? JSON.stringify(body) : undefined
   });
 
