@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LM Launch</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="bg-grid"></div>
+
+    <header class="topbar">
+      <div class="brand-block">
+        <span class="badge">Multi-Instance Orchestrator</span>
+        <h1>LM Launch</h1>
+        <p>Docker-first launcher for parallel LM Studio workloads. Manage instances, models, and runtimes from one dashboard.</p>
+      </div>
+      <div class="status-chip">independent launcher • works with lm studio</div>
+    </header>
+
+    <main class="layout">
+      <section class="card span-4">
+        <h2>API Settings</h2>
+        <p class="card-subtitle">Connect dashboard controls to your launcher API.</p>
+        <div class="row">
+          <label>API Base URL</label>
+          <input id="apiBase" value="http://localhost:8081" />
+        </div>
+        <div class="row">
+          <label>Bearer Token</label>
+          <input id="apiToken" type="password" value="change-me" />
+        </div>
+        <div class="button-row">
+          <button id="saveApi">Save</button>
+        </div>
+      </section>
+
+      <section class="card span-4">
+        <h2>README</h2>
+        <p class="card-subtitle">Operator notes surfaced in-dashboard.</p>
+        <details style="margin-bottom: 10px;">
+          <summary style="cursor: pointer;">Quick Start</summary>
+          <div style="padding-top: 8px; font-size: 13px; line-height: 1.45;">
+            1. Configure token and API base URL. <br />
+            2. Create a profile (runtime defaults). <br />
+            3. Launch instances with model + per-instance concurrency. <br />
+            4. Use copy buttons for base/chat/model routing values.
+          </div>
+        </details>
+        <details>
+          <summary style="cursor: pointer;">Architecture</summary>
+          <div style="padding-top: 8px; font-size: 13px; line-height: 1.45;">
+            Docker stack: API (8081), Web (8080), Bridge (internal).<br />
+            Profiles store runtime defaults; instances store effective model and inflight limits.
+          </div>
+        </details>
+      </section>
+
+      <section class="card span-4">
+        <h2>Create Profile</h2>
+        <p class="card-subtitle">Runtime defaults only. Profile ID is auto-generated from name.</p>
+        <div class="grid">
+          <label>Profile Name<input id="profileName" placeholder="Qwen Orchestrator" /></label>
+          <label>Host<input id="profileHost" value="127.0.0.1" /></label>
+          <label>Port<input id="profilePort" type="number" value="1234" /></label>
+          <label>GPUs (optional)
+            <div style="display: flex; gap: 8px; align-items: flex-start;">
+              <select id="profileGpus" multiple style="flex: 1; min-height: 80px;"></select>
+              <button type="button" id="loadGpusBtn" style="white-space: nowrap;">Load</button>
+            </div>
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="upsertProfile">Save Profile</button>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="section-header">
+          <div>
+            <h2>Instances</h2>
+            <p class="card-subtitle">Launch and operate instances from one place.</p>
+          </div>
+          <button id="refreshInstances">Refresh</button>
+        </div>
+
+        <div style="background: rgba(13, 19, 35, 0.5); padding: 12px; border-radius: 6px; margin-bottom: 12px; border: 1px solid rgba(92, 165, 255, 0.2);">
+          <h3 style="margin: 0 0 10px 0; font-size: 13px; color: rgba(255,255,255,0.75);">Launch New Instance</h3>
+          <div style="display: grid; grid-template-columns: 1.2fr 1fr 1.3fr 1fr auto; gap: 8px; align-items: end;">
+            <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+              Profile (id or name)
+              <input id="launchProfileId" placeholder="Qwen Orchestrator" style="padding: 6px; font-size: 12px;" />
+            </label>
+            <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+              Instance ID
+              <input id="launchInstanceId" placeholder="auto" style="padding: 6px; font-size: 12px;" />
+            </label>
+            <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+              Model
+              <div style="display: flex; gap: 6px;">
+                <select id="launchInstanceModel" style="flex: 1; padding: 6px; font-size: 12px;">
+                  <option value="">-- Select model --</option>
+                </select>
+                <button type="button" id="loadLaunchModelsBtn" style="white-space: nowrap;">Load</button>
+              </div>
+            </label>
+            <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+              Max Inflight
+              <input id="launchInflight" type="number" value="4" min="1" style="padding: 6px; font-size: 12px;" />
+            </label>
+            <button id="launchInstance" style="height: 34px;">Start</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>State</th>
+                <th>Model</th>
+                <th>Port</th>
+                <th>URLs</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="instanceRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card span-6">
+        <div class="section-header">
+          <div>
+            <h2>Profiles</h2>
+            <p class="card-subtitle">Saved runtime configurations.</p>
+          </div>
+          <button id="refreshProfiles">Refresh</button>
+        </div>
+        <pre id="profilesView"></pre>
+      </section>
+
+      <section class="card span-6">
+        <div class="section-header">
+          <div>
+            <h2>Ready Manifest</h2>
+            <p class="card-subtitle">Pool of ready instances for routing.</p>
+          </div>
+          <button id="refreshManifest">Refresh</button>
+        </div>
+        <pre id="manifestView"></pre>
+      </section>
+
+      <section class="card span-5">
+        <h2>Logs</h2>
+        <p class="card-subtitle">Tail instance process output.</p>
+        <div class="row">
+          <label>Instance ID</label>
+          <input id="logsInstanceId" placeholder="inst_qwen_1" />
+        </div>
+        <div class="row">
+          <label>Lines</label>
+          <input id="logsLines" type="number" value="200" />
+        </div>
+        <div class="button-row">
+          <button id="refreshLogs">Tail Logs</button>
+          <button id="clearLogs">Clear</button>
+          <button id="copyLogs">Copy</button>
+        </div>
+        <pre id="logsView"></pre>
+      </section>
+
+      <section class="card span-7">
+        <h2>Config YAML</h2>
+        <p class="card-subtitle">Export, review, and import shareable launcher configuration snapshots.</p>
+        <div class="button-row">
+          <button id="refreshConfigStatus">Refresh Status</button>
+        </div>
+        <pre id="configStatus"></pre>
+        <div class="button-row">
+          <button id="exportYaml">Export YAML</button>
+          <button id="copyYaml">Copy YAML</button>
+          <button id="downloadYaml">Download YAML</button>
+          <button id="importYamlDryRun">Import Dry Run</button>
+          <button id="importYamlApply">Import Apply</button>
+        </div>
+        <label>YAML</label>
+        <textarea id="yamlEditor" rows="14" placeholder="Paste shared-config.yaml content here"></textarea>
+        <pre id="yamlResult"></pre>
+      </section>
+    </main>
+
+    <pre id="toast"></pre>
+
+    <script src="app.js"></script>
+  </body>
+</html>

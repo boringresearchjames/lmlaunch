@@ -1,0 +1,45 @@
+services:
+  bridge:
+    build:
+      context: ./apps/host-bridge
+      args:
+        INSTALL_LMS: ${INSTALL_LMS:-true}
+    container_name: lmlaunch-bridge
+    environment:
+      BRIDGE_PORT: 8090
+      BRIDGE_AUTH_TOKEN: ${BRIDGE_AUTH_TOKEN:-change-me}
+      LOG_LINES_DEFAULT: 200
+    expose:
+      - "8090"
+    volumes:
+      - ./data/bridge:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./apps/api
+    container_name: lmlaunch-api
+    environment:
+      PORT: 8081
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-change-me}
+      BRIDGE_URL: http://bridge:8090
+      BRIDGE_AUTH_TOKEN: ${BRIDGE_AUTH_TOKEN:-change-me}
+      STATE_FILE: /data/state.json
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data/api:/data
+    depends_on:
+      - bridge
+    restart: unless-stopped
+
+  web:
+    image: nginx:1.27-alpine
+    container_name: lmlaunch-web
+    ports:
+      - "8080:80"
+    volumes:
+      - ./apps/web:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    restart: unless-stopped

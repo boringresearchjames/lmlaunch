@@ -1,0 +1,15 @@
+{
+  "name": "lmlaunch",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/api",
+    "apps/host-bridge"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @lmlaunch/api",
+    "dev:api": "npm run dev --workspace @lmlaunch/api",
+    "dev:bridge": "npm run dev --workspace @lmlaunch/host-bridge",
+    "start": "npm run start --workspace @lmlaunch/api"
+  }
+}
