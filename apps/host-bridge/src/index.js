@@ -622,6 +622,12 @@ function isLmsCliPasskeyMismatchError(text) {
     || msg.includes("failed to authenticate");
 }
 
+function isRuntimeAliasNotFoundError(text) {
+  const msg = String(text || "").toLowerCase();
+  return msg.includes("no installed runtime extensions found matching")
+    || msg.includes("use 'lms runtime ls' to see installed runtime extensions");
+}
+
 async function selectRuntime(runtimeId, env, instanceId = null) {
   if (!runtimeId || runtimeId === "auto") {
     return;
@@ -644,11 +650,13 @@ async function selectRuntime(runtimeId, env, instanceId = null) {
     }
   } catch (error) {
     const errorText = String(error?.message || error);
-    if (isLmsCliPasskeyMismatchError(errorText)) {
+    if (isLmsCliPasskeyMismatchError(errorText) || isRuntimeAliasNotFoundError(errorText)) {
       if (instanceId) {
         writeMeta(instanceId, "instance.runtime.selection.skipped", {
           runtime_id: runtimeIdStr,
-          reason: "lms_cli_passkey_mismatch",
+          reason: isLmsCliPasskeyMismatchError(errorText)
+            ? "lms_cli_passkey_mismatch"
+            : "runtime_alias_not_found",
           error: errorText
         });
       }
