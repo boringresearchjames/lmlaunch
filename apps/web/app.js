@@ -6,8 +6,8 @@ const settings = {
 let instancesCache = [];
 let gpuTelemetryCache = [];
 let runtimeBackendsCache = [];
-let launchPending = null;
-let launchStatusTimer = null;
+let operationPending = null;
+let operationStatusTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,46 +15,84 @@ function toast(msg) {
   $("toast").textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
 }
 
-function setLaunchPending(info) {
-  launchPending = info;
+function setOperationPending(info) {
+  operationPending = info;
   const statusEl = $("launchStatus");
   const startBtn = $("launchInstance");
+  const loadConfigBtn = $("loadSelectedConfig");
+  const closeBtn = $("closeAll");
 
-  if (!launchPending) {
+  if (!operationPending) {
     statusEl.textContent = "Idle";
     startBtn.disabled = false;
     startBtn.textContent = "Start";
-    if (launchStatusTimer) {
-      clearInterval(launchStatusTimer);
-      launchStatusTimer = null;
+    loadConfigBtn.disabled = false;
+    loadConfigBtn.textContent = "Load Selected";
+    if (closeBtn) {
+      closeBtn.disabled = false;
+      closeBtn.textContent = "X";
+    }
+    if (operationStatusTimer) {
+      clearInterval(operationStatusTimer);
+      operationStatusTimer = null;
     }
     return;
   }
 
   startBtn.disabled = true;
-  startBtn.textContent = "Starting...";
+  loadConfigBtn.disabled = true;
+  if (closeBtn) {
+    closeBtn.disabled = true;
+  }
+
+  if (operationPending.type === "config-load") {
+    startBtn.textContent = "Start";
+    loadConfigBtn.textContent = "Loading...";
+    if (closeBtn) {
+      closeBtn.textContent = "X";
+    }
+  } else if (operationPending.type === "system-close") {
+    startBtn.textContent = "Start";
+    loadConfigBtn.textContent = "Load Selected";
+    if (closeBtn) {
+      closeBtn.textContent = "...";
+    }
+  } else {
+    startBtn.textContent = "Starting...";
+    loadConfigBtn.textContent = "Load Selected";
+    if (closeBtn) {
+      closeBtn.textContent = "X";
+    }
+  }
 
   const render = () => {
-    const elapsedMs = Date.now() - launchPending.startedAt;
+    const elapsedMs = Date.now() - operationPending.startedAt;
     const elapsedSec = Math.max(1, Math.round(elapsedMs / 1000));
-    statusEl.textContent = `Starting ${launchPending.name} on ${launchPending.host}:${launchPending.port} (${elapsedSec}s)`;
+
+    if (operationPending.type === "config-load") {
+      statusEl.textContent = `Loading config ${operationPending.name} (${elapsedSec}s)`;
+      return;
+    }
+
+    if (operationPending.type === "system-close") {
+      statusEl.textContent = `Closing instances and unloading models (${elapsedSec}s)`;
+      return;
+    }
+
+    statusEl.textContent = `Starting ${operationPending.name} on ${operationPending.host}:${operationPending.port} (${elapsedSec}s)`;
   };
 
   render();
-  if (launchStatusTimer) {
-    clearInterval(launchStatusTimer);
+  if (operationStatusTimer) {
+    clearInterval(operationStatusTimer);
   }
-  launchStatusTimer = setInterval(render, 500);
+  operationStatusTimer = setInterval(render, 500);
 }
 
 function stateChipHtml(state) {
   const normalized = String(state || "unknown").toLowerCase();
-  const showLoader = normalized === "starting" || normalized === "warming" || normalized === "switching_model";
   const safeText = escapeHtml(state || "unknown");
-  if (!showLoader) {
-    return safeText;
-  }
-  return `<span class="state-chip state-${normalized}"><span class="state-loader"></span>${safeText}</span>`;
+  return `<span class="state-chip state-${normalized}"><span class="state-dot"></span>${safeText}</span>`;
 }
 
 async function api(path, options = {}) {
@@ -119,6 +157,16 @@ function parseContextLengthInput() {
     throw new Error("Invalid context preset selected");
   }
   return presetValue;
+}
+
+function parseOptionalPositiveIntegerInput(id) {
+  const raw = String($(id).value || "").trim();
+  if (!raw) return null;
+  const num = Number(raw);
+  if (!Number.isInteger(num) || num < 1) {
+    throw new Error(`${id} must be a positive integer`);
+  }
+  return num;
 }
 
 function normalizeRuntimeBackend(value) {
@@ -297,6 +345,37 @@ $("openHelp").onclick = () => {
   window.open(`${base}/help`, "_blank", "noopener,noreferrer");
 };
 
+$("closeAll").onclick = async () => {
+  const confirmed = window.confirm("Unload all instances and stop LM Studio server now?");
+  if (!confirmed) {
+    return;
+  }
+
+  const closePoll = setInterval(() => {
+    void refreshInstances();
+  }, 1000);
+  setOperationPending({
+    type: "system-close",
+    startedAt: Date.now()
+  });
+
+  try {
+    const payload = await api("/v1/system/close", {
+      method: "POST",
+      body: JSON.stringify({ unloadModels: true, stopDaemon: true })
+    });
+    toast("All instances closed and models unloaded");
+    $("configLibraryResult").textContent = JSON.stringify(payload, null, 2);
+    await refreshInstances();
+    window.close();
+  } catch (error) {
+    toast(`Close failed: ${error.message}`);
+  } finally {
+    clearInterval(closePoll);
+    setOperationPending(null);
+  }
+};
+
 async function loadLMStudioModels(selectElementId) {
   const select = $(selectElementId);
   const currentValue = select.value;
@@ -441,8 +520,17 @@ $("launchInstance").onclick = async () => {
       name,
       port,
       model,
+      bindHost: String($("launchBindHost").value || "0.0.0.0").trim() || "0.0.0.0",
       gpus: selectedGpus,
       maxInflightRequests: Number($("launchInflight").value || 4),
+      queueLimit: Number($("launchQueueLimit").value || 64),
+      modelParallel: Number($("launchModelParallel").value || 1),
+      modelTtlSeconds: parseOptionalPositiveIntegerInput("launchModelTtl"),
+      restartPolicy: {
+        mode: String($("launchRestartMode").value || "never"),
+        maxRetries: Number($("launchRestartRetries").value || 2),
+        backoffMs: Number($("launchRestartBackoffMs").value || 3000)
+      },
       runtimeBackend,
       runtimeSelection,
       runtimeLabel,
@@ -452,7 +540,8 @@ $("launchInstance").onclick = async () => {
     const launchPoll = setInterval(() => {
       void refreshInstances();
     }, 1000);
-    setLaunchPending({
+    setOperationPending({
+      type: "launch",
       name,
       host: "127.0.0.1",
       port,
@@ -466,7 +555,7 @@ $("launchInstance").onclick = async () => {
       });
     } finally {
       clearInterval(launchPoll);
-      setLaunchPending(null);
+      setOperationPending(null);
     }
     toast("Instance started");
     await refreshInstances();
@@ -496,9 +585,24 @@ async function refreshInstances() {
       logsSelect.appendChild(opt);
 
       const tr = document.createElement("tr");
+      const normalizedState = String(inst.state || "unknown").toLowerCase();
+      tr.setAttribute("data-state", normalizedState);
       const baseUrl = `http://${inst.host || "127.0.0.1"}:${inst.port}`;
       const runtimeBackend = normalizeRuntimeBackend(inst.runtime?.hardware || "auto");
       const runtimeLabel = inst.runtime?.label || runtimeBackend;
+      const isStopped = String(inst.state || "").toLowerCase() === "stopped";
+      const primaryAction = isStopped
+        ? `<button class="delete" data-action="delete" data-id="${inst.id}">Remove</button>`
+        : `<button data-action="stop" data-id="${inst.id}">Stop</button>`;
+      const drainAction = isStopped
+        ? ""
+        : `<button data-action="drain" data-id="${inst.id}" data-enabled="${inst.drain ? "false" : "true"}">${inst.drain ? "\u25b6 Resume Intake" : "\u23f8 Pause Intake"}</button>`;
+      const forceStopAction = isStopped
+        ? ""
+        : `<button class="kill" data-action="kill" data-id="${inst.id}">Force Stop</button>`;
+      const removeSecondaryAction = isStopped
+        ? ""
+        : `<button class="delete" data-action="delete" data-id="${inst.id}">Remove</button>`;
 
       tr.innerHTML = `
         <td>${inst.id}</td>
@@ -512,17 +616,19 @@ async function refreshInstances() {
         <td class="gpu-cell">${formatGpuStats(inst)}</td>
         <td class="actions-cell">
           <div class="action-primary">
-            <button data-action="stop" data-id="${inst.id}">Stop</button>
-            <button data-action="drain" data-id="${inst.id}">${inst.drain ? "Undrain" : "Drain"}</button>
+            ${primaryAction}
           </div>
           <details class="action-more">
-            <summary>More</summary>
+            <summary>Options</summary>
             <div class="action-secondary">
-              <button class="copy" data-action="copy-base" data-id="${inst.id}" data-copy="${baseUrl}">Copy Base</button>
-              <button class="copy" data-action="copy-chat" data-id="${inst.id}" data-copy="${baseUrl}/v1/chat/completions">Copy Chat URL</button>
-              <button class="copy" data-action="copy-model" data-id="${inst.id}" data-copy="${inst.effectiveModel}">Copy Model</button>
-              <button class="kill" data-action="kill" data-id="${inst.id}">Kill</button>
-              <button class="delete" data-action="delete" data-id="${inst.id}">Delete</button>
+              ${drainAction}
+              ${forceStopAction}
+              <div class="action-copy-grid">
+                <button class="copy" data-action="copy-base" data-id="${inst.id}" data-copy="${baseUrl}">Base URL</button>
+                <button class="copy" data-action="copy-chat" data-id="${inst.id}" data-copy="${baseUrl}/v1/chat/completions">Chat URL</button>
+              </div>
+              <button class="copy" data-action="copy-model" data-id="${inst.id}" data-copy="${inst.effectiveModel}">Copy Model ID</button>
+              ${removeSecondaryAction}
             </div>
           </details>
         </td>
@@ -552,19 +658,25 @@ async function refreshInstances() {
         const action = btn.getAttribute("data-action");
         try {
           if (action === "stop") {
+            const confirmed = window.confirm(`Stop instance ${id}?`);
+            if (!confirmed) return;
             await api(`/v1/instances/${id}/stop`, { method: "POST", body: "{}" });
           } else if (action === "kill") {
+            const confirmed = window.confirm(`Force stop instance ${id}?`);
+            if (!confirmed) return;
             await api(`/v1/instances/${id}/kill`, {
               method: "POST",
               body: JSON.stringify({ reason: "operator" })
             });
           } else if (action === "drain") {
-            const enable = btn.textContent === "Drain";
+            const enable = btn.getAttribute("data-enabled") === "true";
             await api(`/v1/instances/${id}/drain`, {
               method: "POST",
               body: JSON.stringify({ enabled: enable })
             });
           } else if (action === "delete") {
+            const confirmed = window.confirm(`Remove instance ${id} from LM Launch?`);
+            if (!confirmed) return;
             await api(`/v1/instances/${id}`, {
               method: "DELETE"
             });
@@ -662,10 +774,27 @@ $("loadSelectedConfig").onclick = async () => {
       return;
     }
 
-    const payload = await api(`/v1/instance-configs/${id}/load`, {
-      method: "POST",
-      body: JSON.stringify({ replaceExisting: true })
+    const cfgSelect = $("savedConfigSelect");
+    const cfgName = cfgSelect.options[cfgSelect.selectedIndex]?.textContent || id;
+    const loadPoll = setInterval(() => {
+      void refreshInstances();
+    }, 1000);
+    setOperationPending({
+      type: "config-load",
+      name: cfgName,
+      startedAt: Date.now()
     });
+
+    let payload;
+    try {
+      payload = await api(`/v1/instance-configs/${id}/load`, {
+        method: "POST",
+        body: JSON.stringify({ replaceExisting: true })
+      });
+    } finally {
+      clearInterval(loadPoll);
+      setOperationPending(null);
+    }
 
     $("configLibraryResult").textContent = JSON.stringify(payload, null, 2);
     toast(`Loaded config: started ${payload.started?.length || 0}, failed ${payload.failed?.length || 0}`);
@@ -752,9 +881,45 @@ $("launchRuntimeBackend").onchange = () => {
   }
 };
 
+function applyRestartPolicyUi() {
+  const mode = String($("launchRestartMode").value || "never");
+  const disabled = mode !== "on-failure";
+  $("launchRestartRetries").disabled = disabled;
+  $("launchRestartBackoffMs").disabled = disabled;
+}
+
+$("launchRestartMode").onchange = () => {
+  applyRestartPolicyUi();
+};
+
+$("launchInstanceModel").onchange = () => {
+  const nameInput = $("launchName");
+  if (String(nameInput.value || "").trim()) {
+    return;
+  }
+
+  const rawModel = String($("launchInstanceModel").value || "").trim();
+  if (!rawModel) {
+    return;
+  }
+
+  const base = rawModel
+    .split("/")
+    .pop()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+
+  if (base) {
+    nameInput.value = base;
+  }
+};
+
 refreshInstances();
 refreshConfigLibrary();
 loadRuntimeBackends({ silent: true });
+applyRestartPolicyUi();
 setInterval(refreshInstances, 5000);
 setInterval(() => loadSystemGpus("launchGpus"), 15000);
 setInterval(() => loadRuntimeBackends({ silent: true }), 60000);

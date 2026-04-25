@@ -4,6 +4,10 @@ LM Launch is a Node.js control plane and dashboard for running multiple headless
 
 This repo runs as a host-native Node deployment.
 
+## Dashboard
+
+![LM Launch dashboard](docs/lmlaunch-dashboard.png)
+
 ## What It Does
 
 - Manage runtime profiles (host, port, GPU selection)

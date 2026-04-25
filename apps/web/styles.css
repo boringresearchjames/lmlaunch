@@ -152,6 +152,25 @@ body {
   box-shadow: 0 6px 16px rgba(42, 160, 139, 0.42);
 }
 
+.close-icon {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  border: 1px solid rgba(255, 116, 133, 0.6);
+  background: linear-gradient(180deg, rgba(255, 106, 126, 0.95), rgba(193, 43, 70, 0.95));
+  color: #2a0710;
+}
+
+.close-icon:hover {
+  box-shadow: 0 6px 16px rgba(190, 44, 70, 0.45);
+}
+
 .layout {
   max-width: 1420px;
   margin: 0 auto;
@@ -352,6 +371,10 @@ button:active {
   align-items: end;
 }
 
+.launch-field-span-4 {
+  grid-column: 1 / -1;
+}
+
 .launch-field {
   display: flex;
   flex-direction: column;
@@ -406,8 +429,30 @@ button:active {
 .launch-actions-row {
   grid-column: 1 / -1;
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   margin-top: 2px;
+}
+
+.launch-advanced {
+  border: 1px solid rgba(159, 176, 216, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 14, 28, 0.45);
+  padding: 6px 8px;
+}
+
+.launch-advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.launch-advanced-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 10px;
 }
 
 .config-actions-row {
@@ -447,25 +492,56 @@ button:active {
   font-weight: 700;
 }
 
-.state-loader {
+.state-dot {
   width: 8px;
   height: 8px;
-  border-radius: 999px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: rgba(107, 122, 154, 0.55);
+}
+
+/* Running — green */
+.state-running .state-dot {
+  background: #4cdb8e;
+  box-shadow: 0 0 5px rgba(76, 219, 142, 0.5);
+}
+
+/* Unhealthy — red */
+.state-unhealthy .state-dot {
+  background: #ff5c7a;
+  box-shadow: 0 0 5px rgba(255, 92, 122, 0.45);
+}
+
+/* Stopped — dim grey */
+.state-stopped .state-dot {
+  background: rgba(107, 122, 154, 0.38);
+}
+
+/* Loading states — pulsing cyan */
+.state-starting .state-dot,
+.state-warming .state-dot,
+.state-switching_model .state-dot {
   background: var(--accent-2);
-  box-shadow: 0 0 0 0 rgba(125, 248, 221, 0.6);
   animation: state-pulse 1.2s infinite;
 }
 
+/* Draining — amber */
+.state-draining .state-dot {
+  background: #f5a623;
+  box-shadow: 0 0 5px rgba(245, 166, 35, 0.45);
+  animation: state-pulse-amber 1.4s infinite;
+}
+
 @keyframes state-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(125, 248, 221, 0.6);
-  }
-  80% {
-    box-shadow: 0 0 0 8px rgba(125, 248, 221, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(125, 248, 221, 0);
-  }
+  0%   { box-shadow: 0 0 0 0   rgba(125, 248, 221, 0.6); }
+  80%  { box-shadow: 0 0 0 8px rgba(125, 248, 221, 0); }
+  100% { box-shadow: 0 0 0 0   rgba(125, 248, 221, 0); }
+}
+
+@keyframes state-pulse-amber {
+  0%   { box-shadow: 0 0 0 0   rgba(245, 166, 35, 0.6); }
+  80%  { box-shadow: 0 0 0 8px rgba(245, 166, 35, 0); }
+  100% { box-shadow: 0 0 0 0   rgba(245, 166, 35, 0); }
 }
 
 .instance-logs-panel {
@@ -514,9 +590,28 @@ th {
   min-width: 200px;
 }
 
+/* Row state indicator — left border stripe */
+tr[data-state="running"] td:first-child {
+  border-left: 3px solid #4cdb8e;
+}
+tr[data-state="unhealthy"] td:first-child {
+  border-left: 3px solid #ff5c7a;
+}
+tr[data-state="stopped"] td:first-child {
+  border-left: 3px solid rgba(107, 122, 154, 0.3);
+}
+tr[data-state="starting"] td:first-child,
+tr[data-state="warming"] td:first-child,
+tr[data-state="switching_model"] td:first-child {
+  border-left: 3px solid var(--accent-2);
+}
+tr[data-state="draining"] td:first-child {
+  border-left: 3px solid #f5a623;
+}
+
 .action-primary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 6px;
   margin-bottom: 6px;
 }
@@ -538,6 +633,25 @@ th {
   font-size: 11px;
   font-weight: 700;
   user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.action-more summary::before {
+  content: "▸";
+  font-size: 10px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.action-more[open] summary::before {
+  transform: rotate(90deg);
 }
 
 .action-more[open] {
@@ -548,11 +662,19 @@ th {
   margin-top: 8px;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 6px;
+  gap: 5px;
 }
 
 .action-secondary button {
   width: 100%;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.action-copy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
 }
 
 .copy {

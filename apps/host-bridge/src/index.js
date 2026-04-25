@@ -20,6 +20,7 @@ const cleanupOldInstancesOnExit = process.env.CLEANUP_OLD_INSTANCES_ON_EXIT !== 
 const cleanupUnloadModelsOnStart = process.env.CLEANUP_UNLOAD_MODELS_ON_START !== "false";
 const cleanupUnloadModelsOnExit = process.env.CLEANUP_UNLOAD_MODELS_ON_EXIT !== "false";
 const cleanupStopDaemonOnExit = process.env.CLEANUP_STOP_DAEMON_ON_EXIT === "true";
+const gpuBleedMaxDeltaMiB = Number(process.env.GPU_BLEED_MAX_DELTA_MIB || 256);
 const bootstrapHost = String(process.env.LMSTUDIO_HOST || "127.0.0.1");
 const bootstrapPort = Number(process.env.LMSTUDIO_PORT || 1234);
 
@@ -77,10 +78,20 @@ function resolveServerArgs(profile) {
     ? String(Number(profile.contextLength))
     : "auto";
 
-  return raw.map((arg) => String(arg)
+  const bindHost = String(profile?.bindHost || "0.0.0.0").trim() || "0.0.0.0";
+
+  const args = raw.map((arg) => String(arg)
     .replaceAll("{port}", String(profile?.port || ""))
     .replaceAll("{model}", String(profile?.model || ""))
-    .replaceAll("{contextLength}", contextValue));
+    .replaceAll("{contextLength}", contextValue)
+    .replaceAll("{bindHost}", bindHost));
+
+  const hasBind = args.some((arg, idx) => arg === "--bind" || (idx > 0 && args[idx - 1] === "--bind") || arg.startsWith("--bind="));
+  if (!hasBind) {
+    args.push("--bind", bindHost);
+  }
+
+  return args;
 }
 
 function normalizeRuntimeBackend(value) {
@@ -90,37 +101,54 @@ function normalizeRuntimeBackend(value) {
   return "auto";
 }
 
+function normalizeGpuList(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((gpu) => String(gpu).trim()).filter(Boolean))];
+}
+
+function applyGpuVisibilityEnv(env, gpuList) {
+  const value = Array.isArray(gpuList) ? gpuList.join(",") : "";
+  env.CUDA_VISIBLE_DEVICES = value;
+  env.NVIDIA_VISIBLE_DEVICES = value;
+  env.GPU_DEVICE_ORDINAL = value;
+  env.HIP_VISIBLE_DEVICES = value;
+  env.ROCR_VISIBLE_DEVICES = value;
+  env.ZE_AFFINITY_MASK = value;
+  env.GGML_VK_VISIBLE_DEVICES = value;
+  env.VK_VISIBLE_DEVICES = value;
+}
+
 function buildRuntimeEnv(baseEnv, profile) {
   const env = { ...baseEnv };
   const backend = normalizeRuntimeBackend(profile?.runtime?.hardware);
-  const gpuList = Array.isArray(profile?.gpus) ? profile.gpus.join(",") : "";
+  const gpuIds = normalizeGpuList(profile?.gpus);
 
   if (backend === "cpu") {
-    env.CUDA_VISIBLE_DEVICES = "";
+    applyGpuVisibilityEnv(env, []);
     env.LMSTUDIO_RUNTIME_BACKEND = "cpu";
     env.LMSTUDIO_COMPUTE_BACKEND = "cpu";
-    return { env, backend };
+    return { env, backend, gpuIds };
   }
 
   if (backend === "vulkan") {
-    env.CUDA_VISIBLE_DEVICES = gpuList;
+    applyGpuVisibilityEnv(env, gpuIds);
     env.LMSTUDIO_RUNTIME_BACKEND = "vulkan";
     env.LMSTUDIO_COMPUTE_BACKEND = "vulkan";
     env.GGML_VULKAN = "1";
-    return { env, backend };
+    return { env, backend, gpuIds };
   }
 
   if (backend === "cuda") {
-    env.CUDA_VISIBLE_DEVICES = gpuList;
+    applyGpuVisibilityEnv(env, gpuIds);
     env.LMSTUDIO_RUNTIME_BACKEND = "cuda";
     env.LMSTUDIO_COMPUTE_BACKEND = "cuda";
-    return { env, backend };
+    return { env, backend, gpuIds };
   }
 
-  env.CUDA_VISIBLE_DEVICES = gpuList;
+  applyGpuVisibilityEnv(env, gpuIds);
   env.LMSTUDIO_RUNTIME_BACKEND = "auto";
   env.LMSTUDIO_COMPUTE_BACKEND = "auto";
-  return { env, backend: "auto" };
+  return { env, backend: "auto", gpuIds };
 }
 
 async function runLms(args, env, options = {}) {
@@ -166,6 +194,69 @@ async function runCommand(command, args) {
       });
     });
   });
+}
+
+async function getGpuMemoryUsageMap() {
+  const result = await runCommand("nvidia-smi", [
+    "--query-gpu=index,memory.used",
+    "--format=csv,noheader,nounits"
+  ]);
+
+  if (!result.ok) {
+    return null;
+  }
+
+  const map = new Map();
+  const lines = String(result.stdout || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const [indexRaw, memRaw] = line.split(",").map((x) => String(x || "").trim());
+    const mem = Number(memRaw);
+    if (indexRaw !== "" && Number.isFinite(mem)) {
+      map.set(String(indexRaw), mem);
+    }
+  }
+
+  return map;
+}
+
+function activeAssignedGpuSet(excludeInstanceId = null) {
+  const assigned = new Set();
+  for (const [id, record] of instances.entries()) {
+    if (excludeInstanceId && id === excludeInstanceId) continue;
+    if (!record || record.state === "stopped") continue;
+    const gpus = Array.isArray(record?.profile?.gpus) ? record.profile.gpus : [];
+    for (const gpu of gpus) {
+      assigned.add(String(gpu));
+    }
+  }
+  return assigned;
+}
+
+function detectGpuBleed(beforeMap, afterMap, selectedGpuIds, allowedGpuIds, maxDeltaMiB) {
+  if (!(beforeMap instanceof Map) || !(afterMap instanceof Map)) {
+    return [];
+  }
+
+  const selected = new Set((selectedGpuIds || []).map((g) => String(g)));
+  const allowed = new Set((allowedGpuIds || []).map((g) => String(g)));
+  const violations = [];
+
+  for (const [gpuId, afterMiB] of afterMap.entries()) {
+    if (selected.has(gpuId)) continue;
+    if (allowed.has(gpuId)) continue;
+
+    const beforeMiB = Number(beforeMap.get(gpuId) || 0);
+    const delta = Number(afterMiB) - beforeMiB;
+    if (delta > maxDeltaMiB) {
+      violations.push({ gpuId, beforeMiB, afterMiB, deltaMiB: delta });
+    }
+  }
+
+  return violations;
 }
 
 function isNoRunningServersMessage(text) {
@@ -292,15 +383,26 @@ async function ensureServerStartWithArgs(env, args, instanceId = null) {
   });
 }
 
-async function ensureModelLoaded(model, env, instanceId = null) {
+async function ensureModelLoaded(model, env, instanceId = null, options = {}) {
   const modelId = String(model || "").trim();
   if (!modelId) {
     throw new Error("model is required for load");
   }
 
-  await runLms(["load", modelId], env, {
+  const args = ["load", modelId];
+  const ttlSeconds = Number(options?.ttlSeconds);
+  if (Number.isInteger(ttlSeconds) && ttlSeconds > 0) {
+    args.push("--ttl", String(ttlSeconds));
+  }
+
+  const parallel = Number(options?.parallel);
+  if (Number.isInteger(parallel) && parallel > 0) {
+    args.push("--parallel", String(parallel));
+  }
+
+  await runLms(args, env, {
     instanceId,
-    label: `lms load ${modelId}`
+    label: `lms ${args.join(" ")}`
   });
 }
 
@@ -404,6 +506,176 @@ async function bootstrapServer() {
   throw new Error(`LM Studio server did not become ready on ${bootstrapHost}:${bootstrapPort} within ${timeoutMs}ms`);
 }
 
+function normalizeRestartPolicy(value = {}) {
+  const rawMode = String(value?.mode || "never").trim().toLowerCase();
+  const mode = rawMode === "on-failure" ? "on-failure" : "never";
+  const maxRetries = mode === "on-failure"
+    ? Math.min(20, Math.max(1, Number(value?.maxRetries || 2)))
+    : 0;
+  const backoffMs = mode === "on-failure"
+    ? Math.min(120000, Math.max(250, Number(value?.backoffMs || 3000)))
+    : 0;
+  return { mode, maxRetries, backoffMs };
+}
+
+async function launchRuntimeForInstance(instanceId, record, reason = "start") {
+  const profile = record.profile || {};
+  const runtimeEnv = buildRuntimeEnv(process.env, profile);
+  const env = runtimeEnv.env;
+  if (runtimeEnv.backend !== "cpu" && runtimeEnv.gpuIds.length === 0) {
+    throw new Error("non-CPU runtime requires explicit GPU selection");
+  }
+
+  const selectedGpuIds = runtimeEnv.gpuIds.map((g) => String(g));
+  const allowedOtherGpuIds = activeAssignedGpuSet(instanceId);
+  let gpuMemoryBefore = null;
+  if (runtimeEnv.backend !== "cpu" && selectedGpuIds.length > 0) {
+    gpuMemoryBefore = await getGpuMemoryUsageMap();
+  }
+
+  const runtimeArgs = resolveServerArgs(profile);
+  writeMeta(instanceId, "instance.start.request", {
+    reason,
+    host: String(profile.host || "127.0.0.1"),
+    bind_host: String(profile.bindHost || "0.0.0.0"),
+    port: Number(profile.port),
+    model: String(profile.model),
+    gpus: runtimeEnv.gpuIds.join(","),
+    visible_devices: {
+      cuda: env.CUDA_VISIBLE_DEVICES || "",
+      nvidia: env.NVIDIA_VISIBLE_DEVICES || "",
+      rocm: env.ROCR_VISIBLE_DEVICES || "",
+      vulkan: env.GGML_VK_VISIBLE_DEVICES || ""
+    },
+    runtime_backend: runtimeEnv.backend,
+    runtime_args: runtimeArgs.join(" "),
+    context_length: Number.isInteger(Number(profile.contextLength)) && Number(profile.contextLength) > 0
+      ? Number(profile.contextLength)
+      : "auto",
+    startup_timeout_ms: Number(profile.startupTimeoutMs || 180000),
+    queue_limit: Number(profile.queueLimit || 64),
+    model_ttl_seconds: Number(profile.modelTtlSeconds || 0) || null,
+    model_parallel: Number(profile.modelParallel || 0) || null,
+    restart_policy: normalizeRestartPolicy(profile.restartPolicy),
+    readiness_poll_ms: readinessPollMs,
+    smoke_check_enabled: smokeCheckEnabled,
+    strict_smoke_check: strictSmokeCheck
+  });
+
+  await ensureDaemonUp(env, instanceId);
+  await ensureServerStartWithArgs(env, runtimeArgs, instanceId);
+  await ensureModelLoaded(profile.model, env, instanceId, {
+    ttlSeconds: profile.modelTtlSeconds,
+    parallel: profile.modelParallel
+  });
+
+  if (runtimeEnv.backend !== "cpu" && selectedGpuIds.length > 0) {
+    const gpuMemoryAfter = await getGpuMemoryUsageMap();
+    const bleed = detectGpuBleed(
+      gpuMemoryBefore,
+      gpuMemoryAfter,
+      selectedGpuIds,
+      [...allowedOtherGpuIds],
+      gpuBleedMaxDeltaMiB
+    );
+
+    if (bleed.length > 0) {
+      writeMeta(instanceId, "instance.start.gpu_bleed_detected", {
+        selected_gpus: selectedGpuIds.join(","),
+        threshold_mib: gpuBleedMaxDeltaMiB,
+        bleed
+      });
+      throw new Error(
+        `GPU bleed detected on unassigned devices: ${bleed.map((x) => `${x.gpuId}(+${x.deltaMiB}MiB)`).join(", ")}`
+      );
+    }
+  }
+
+  writeMeta(instanceId, "instance.start.model.loaded", {
+    model: String(profile.model),
+    ttl_seconds: Number(profile.modelTtlSeconds || 0) || null,
+    parallel: Number(profile.modelParallel || 0) || null
+  });
+
+  record.state = "warming";
+  record.lastError = null;
+  writeMeta(instanceId, "instance.start.warming", {
+    reason: "awaiting readiness checks"
+  });
+  void monitorReadiness(instanceId, record);
+}
+
+async function maybeAutoRestart(instanceId, record, reason) {
+  if (!instances.has(instanceId) || !record) return;
+
+  const policy = normalizeRestartPolicy(record.profile?.restartPolicy);
+  if (policy.mode !== "on-failure") {
+    return;
+  }
+  if (record.state === "stopped") {
+    return;
+  }
+  if (record.restartInFlight) {
+    return;
+  }
+
+  const attempts = Number(record.restartAttempts || 0);
+  if (attempts >= policy.maxRetries) {
+    writeMeta(instanceId, "instance.restart.exhausted", {
+      reason,
+      attempts,
+      max_retries: policy.maxRetries
+    });
+    return;
+  }
+
+  record.restartInFlight = true;
+  record.restartAttempts = attempts + 1;
+  const backoffMs = policy.backoffMs * record.restartAttempts;
+  writeMeta(instanceId, "instance.restart.scheduled", {
+    reason,
+    attempt: record.restartAttempts,
+    max_retries: policy.maxRetries,
+    backoff_ms: backoffMs
+  });
+  record.state = "restarting";
+
+  let shouldRetry = false;
+  try {
+    await sleep(backoffMs);
+
+    if (!instances.has(instanceId) || record.state === "stopped") {
+      return;
+    }
+
+    try {
+      await stopServer(record.profile, process.env, instanceId);
+    } catch {
+      // Best effort pre-restart cleanup.
+    }
+
+    await launchRuntimeForInstance(instanceId, record, `auto_restart_${record.restartAttempts}`);
+    writeMeta(instanceId, "instance.restart.completed", {
+      attempt: record.restartAttempts,
+      reason
+    });
+  } catch (error) {
+    record.state = "unhealthy";
+    record.lastError = String(error.message || error);
+    writeMeta(instanceId, "instance.restart.failed", {
+      attempt: record.restartAttempts,
+      error: record.lastError
+    });
+    shouldRetry = true;
+  } finally {
+    record.restartInFlight = false;
+  }
+
+  if (shouldRetry) {
+    void maybeAutoRestart(instanceId, record, "restart_failure");
+  }
+}
+
 async function monitorReadiness(instanceId, record) {
   const startedAt = Date.now();
   const timeoutMs = Number(record.profile?.startupTimeoutMs || 180000);
@@ -424,6 +696,7 @@ async function monitorReadiness(instanceId, record) {
       const ready = await checkInstanceReady(record.profile);
       record.lastHealthOkAt = new Date().toISOString();
       record.lastError = null;
+      record.restartAttempts = 0;
       record.state = record.drain ? "draining" : "ready";
       writeMeta(instanceId, "readiness.passed", {
         attempts,
@@ -453,6 +726,7 @@ async function monitorReadiness(instanceId, record) {
     timeout_ms: timeoutMs,
     last_error: record.lastError
   });
+  void maybeAutoRestart(instanceId, record, "readiness_timeout");
 }
 
 function tail(filePath, lines) {
@@ -599,6 +873,26 @@ app.get("/v1/runtime/backends", async (_req, res) => {
   });
 });
 
+app.post("/v1/system/close", async (req, res) => {
+  const unloadModelsAfterStop = req.body?.unloadModels !== false;
+  const stopDaemonAfterStop = req.body?.stopDaemon !== false;
+
+  try {
+    await stopAllServers("api:system_close", {
+      unloadModelsAfterStop,
+      stopDaemonAfterStop
+    });
+
+    return res.json({
+      success: true,
+      unloadedModels: unloadModelsAfterStop,
+      stoppedDaemon: stopDaemonAfterStop
+    });
+  } catch (error) {
+    return res.status(502).json({ error: String(error.message || error) });
+  }
+});
+
 app.get("/v1/gpus", (_req, res) => {
   execFile(
     "nvidia-smi",
@@ -704,8 +998,7 @@ app.post("/v1/instances/start", async (req, res) => {
     return res.status(409).json({ error: "instance already running" });
   }
 
-  const runtimeEnv = buildRuntimeEnv(process.env, profile);
-  const env = runtimeEnv.env;
+  const restartPolicy = normalizeRestartPolicy(profile?.restartPolicy);
 
   const record = {
     profile,
@@ -715,46 +1008,32 @@ app.post("/v1/instances/start", async (req, res) => {
     queueDepth: 0,
     drain: false,
     lastHealthOkAt: null,
-    lastError: null
+    lastError: null,
+    restartPolicy,
+    restartAttempts: 0,
+    restartInFlight: false
   };
 
   instances.set(instanceId, record);
-  const runtimeArgs = resolveServerArgs(profile);
-  writeMeta(instanceId, "instance.start.request", {
-    host: String(profile.host || "127.0.0.1"),
-    port: Number(profile.port),
-    model: String(profile.model),
-    gpus: Array.isArray(profile.gpus) ? profile.gpus.join(",") : "",
-    runtime_backend: runtimeEnv.backend,
-    runtime_args: runtimeArgs.join(" "),
-    context_length: Number.isInteger(Number(profile.contextLength)) && Number(profile.contextLength) > 0
-      ? Number(profile.contextLength)
-      : "auto",
-    startup_timeout_ms: Number(profile.startupTimeoutMs || 180000),
-    readiness_poll_ms: readinessPollMs,
-    smoke_check_enabled: smokeCheckEnabled,
-    strict_smoke_check: strictSmokeCheck
-  });
 
   try {
-    await ensureDaemonUp(env, instanceId);
-    await ensureServerStartWithArgs(env, runtimeArgs, instanceId);
-    await ensureModelLoaded(profile.model, env, instanceId);
-    writeMeta(instanceId, "instance.start.model.loaded", { model: String(profile.model) });
+    await launchRuntimeForInstance(instanceId, record, "start_request");
   } catch (error) {
+    const errorText = String(error.message || error);
+    const isInputError = errorText.includes("non-CPU runtime requires explicit GPU selection");
     record.state = "unhealthy";
-    record.lastError = String(error.message || error);
+    record.lastError = errorText;
+    try {
+      await stopServer(profile, process.env, instanceId);
+    } catch {
+      // Best effort cleanup on launch failure.
+    }
     writeMeta(instanceId, "instance.start.failed", { error: record.lastError });
-    return res.status(500).json({ error: String(error.message || error) });
+    if (!isInputError) {
+      void maybeAutoRestart(instanceId, record, "startup_failure");
+    }
+    return res.status(isInputError ? 400 : 500).json({ error: errorText });
   }
-
-  record.state = "warming";
-  record.lastError = null;
-  writeMeta(instanceId, "instance.start.warming", {
-    reason: "awaiting readiness checks"
-  });
-
-  void monitorReadiness(instanceId, record);
 
   res.status(201).json({
     success: true,
@@ -781,6 +1060,8 @@ app.post("/v1/instances/:id/stop", async (req, res) => {
       await stopServer(record.profile, process.env, req.params.id);
       record.state = "stopped";
     }
+    record.restartInFlight = false;
+    record.restartAttempts = 0;
     writeMeta(req.params.id, "instance.stop.completed", { state: record.state });
     res.json({ success: true });
   } catch (error) {
@@ -805,6 +1086,8 @@ app.post("/v1/instances/:id/kill", async (req, res) => {
       await stopServer(record.profile, process.env, req.params.id);
     }
     record.state = "stopped";
+    record.restartInFlight = false;
+    record.restartAttempts = 0;
     writeMeta(req.params.id, "instance.kill.completed", { state: record.state });
     res.json({ success: true });
   } catch (error) {

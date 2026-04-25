@@ -153,12 +153,17 @@ function currentInstanceTemplates() {
   return (state.instances || []).map((inst) => ({
     name: String(inst.profileName || inst.id || "instance").trim() || "instance",
     host: String(inst.host || "127.0.0.1"),
+    bindHost: String(inst.bindHost || "0.0.0.0"),
     port: Number(inst.port || 1234),
     model: String(inst.effectiveModel || inst.pendingModel || "").trim(),
     gpus: Array.isArray(inst.gpus) ? inst.gpus.map((g) => String(g)) : [],
     runtime: cleanRuntime(inst.runtime),
     contextLength: parseContextLength(inst.contextLength),
-    maxInflightRequests: Number(inst.maxInflightRequests || 4)
+    maxInflightRequests: Number(inst.maxInflightRequests || 4),
+    queueLimit: parsePositiveInteger(inst.queueLimit, 64, 1, 100000),
+    modelTtlSeconds: parseOptionalPositiveInteger(inst.modelTtlSeconds),
+    modelParallel: parseOptionalPositiveInteger(inst.modelParallel),
+    restartPolicy: parseRestartPolicy(inst.restartPolicy)
   }));
 }
 
@@ -178,12 +183,17 @@ function sanitizeInstanceConfigPayload(raw = {}) {
       return {
         name: String(inst?.name || `instance-${index + 1}`).trim() || `instance-${index + 1}`,
         host: String(inst?.host || "127.0.0.1"),
+        bindHost: parseBindHost(inst?.bindHost),
         port,
         model,
         gpus: Array.isArray(inst?.gpus) ? inst.gpus.map((g) => String(g)) : [],
         runtime: cleanRuntime(inst?.runtime),
         contextLength: parseContextLength(inst?.contextLength),
-        maxInflightRequests: Number(inst?.maxInflightRequests || 4)
+        maxInflightRequests: parsePositiveInteger(inst?.maxInflightRequests, 4, 1, 1024),
+        queueLimit: parsePositiveInteger(inst?.queueLimit, 64, 1, 100000),
+        modelTtlSeconds: parseOptionalPositiveInteger(inst?.modelTtlSeconds),
+        modelParallel: parseOptionalPositiveInteger(inst?.modelParallel),
+        restartPolicy: parseRestartPolicy(inst?.restartPolicy)
       };
     })
     .filter(Boolean);
@@ -342,6 +352,39 @@ function parseContextLength(value) {
   const num = Number(value);
   if (!Number.isInteger(num) || num < 256) return null;
   return num;
+}
+
+function parseOptionalPositiveInteger(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 1) return null;
+  return num;
+}
+
+function parsePositiveInteger(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < min || num > max) {
+    return fallback;
+  }
+  return num;
+}
+
+function parseBindHost(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "0.0.0.0";
+  return raw;
+}
+
+function parseRestartPolicy(value = {}) {
+  const modeRaw = String(value?.mode || value?.restartMode || "never").trim().toLowerCase();
+  const mode = modeRaw === "on-failure" ? "on-failure" : "never";
+  const maxRetries = mode === "on-failure"
+    ? parsePositiveInteger(value?.maxRetries ?? value?.restartMaxRetries, 2, 1, 20)
+    : 0;
+  const backoffMs = mode === "on-failure"
+    ? parsePositiveInteger(value?.backoffMs ?? value?.restartBackoffMs, 3000, 250, 120000)
+    : 0;
+  return { mode, maxRetries, backoffMs };
 }
 
 function normalizeRuntimeBackend(value) {
@@ -679,10 +722,15 @@ app.post("/v1/instance-configs/:id/load", async (req, res) => {
       const payload = {
         name: item.name,
         host: item.host,
+        bindHost: item.bindHost || "0.0.0.0",
         port: item.port,
         model: item.model,
         gpus: Array.isArray(item.gpus) ? item.gpus : [],
         maxInflightRequests: Number(item.maxInflightRequests || 4),
+        queueLimit: parsePositiveInteger(item.queueLimit, 64, 1, 100000),
+        modelTtlSeconds: parseOptionalPositiveInteger(item.modelTtlSeconds),
+        modelParallel: parseOptionalPositiveInteger(item.modelParallel),
+        restartPolicy: parseRestartPolicy(item.restartPolicy),
         runtimeBackend: item.runtime?.hardware || "auto",
         runtimeSelection: item.runtime?.selection || "",
         runtimeLabel: item.runtime?.label || "",
@@ -1018,12 +1066,17 @@ app.post("/v1/instances/start", async (req, res) => {
   const contextLength = parseContextLength(req.body?.contextLength);
   const runtimeSelection = String(req.body?.runtimeSelection || "").trim();
   const runtimeLabel = String(req.body?.runtimeLabel || "").trim();
+  const bindHost = parseBindHost(req.body?.bindHost);
   const selectionBackend = backendFromRuntimeSelection(runtimeSelection);
   const runtimeBackend = normalizeRuntimeBackend(req.body?.runtimeBackend || selectionBackend || "auto");
   const launchGpus = Array.isArray(req.body?.gpus)
     ? req.body.gpus.map((g) => String(g))
       : [];
-  const maxInflightRequests = Number(req.body?.maxInflightRequests || 4);
+  const maxInflightRequests = parsePositiveInteger(req.body?.maxInflightRequests, 4, 1, 1024);
+  const queueLimit = parsePositiveInteger(req.body?.queueLimit, 64, 1, 100000);
+  const modelTtlSeconds = parseOptionalPositiveInteger(req.body?.modelTtlSeconds);
+  const modelParallel = parseOptionalPositiveInteger(req.body?.modelParallel);
+  const restartPolicy = parseRestartPolicy(req.body?.restartPolicy);
   if (!name) {
     return res.status(400).json({ error: "name is required" });
   }
@@ -1051,6 +1104,11 @@ app.post("/v1/instances/start", async (req, res) => {
   }
 
   const usesGpu = runtimeBackend !== "cpu";
+  if (usesGpu && launchGpus.length === 0) {
+    return res.status(400).json({
+      error: "at least one GPU must be selected for non-CPU runtime"
+    });
+  }
   if (usesGpu) {
     const occupiedGpus = new Set(
       activeInstances
@@ -1078,11 +1136,15 @@ app.post("/v1/instances/start", async (req, res) => {
       label: runtimeLabel || null
     },
     host: launchHost,
+    bindHost,
     port: launchPort,
     gpus: usesGpu ? launchGpus : [],
     contextLength,
     startupTimeoutMs: 180000,
-    queueLimit: 64
+    queueLimit,
+    modelTtlSeconds,
+    modelParallel,
+    restartPolicy
   };
   
   const existing = state.instances.find((x) => x.id === instanceId);
@@ -1097,6 +1159,7 @@ app.post("/v1/instances/start", async (req, res) => {
     effectiveModel: modelToUse,
     pendingModel: null,
     host: launchHost,
+    bindHost,
     port: launchPort,
     state: "starting",
     pid: null,
@@ -1111,6 +1174,10 @@ app.post("/v1/instances/start", async (req, res) => {
     },
     contextLength,
     maxInflightRequests,
+    queueLimit,
+    modelTtlSeconds,
+    modelParallel,
+    restartPolicy,
     inflightRequests: 0,
     queueDepth: 0,
     drain: false,
@@ -1128,6 +1195,15 @@ app.post("/v1/instances/start", async (req, res) => {
     state.instances.push(provisional);
   }
   saveState(state);
+  try {
+    const launch = await bridgeFetch("POST", "/v1/instances/start", {
+      instanceId,
+      profile: {
+        ...profile,
+        model: modelToUse,
+        maxInflightRequests
+      }
+    });
 
     const idx = state.instances.findIndex((x) => x.id === instanceId);
     const instance = {
@@ -1137,16 +1213,17 @@ app.post("/v1/instances/start", async (req, res) => {
       lastError: null,
       updatedAt: now()
     };
+
     if (idx >= 0) {
       state.instances[idx] = instance;
     } else {
       state.instances.push(instance);
     }
-      gpuStats: [],
-      startedAt: now(),
-      updatedAt: now()
-    };
 
+    saveState(state);
+    audit("instance.start", { instanceId, profileName: name, port: launchPort });
+    res.status(201).json(instance);
+  } catch (error) {
     const idx = state.instances.findIndex((x) => x.id === instanceId);
     if (idx >= 0) {
       state.instances[idx] = {
@@ -1157,17 +1234,6 @@ app.post("/v1/instances/start", async (req, res) => {
       };
       saveState(state);
     }
-    if (existing) {
-      const idx = state.instances.findIndex((x) => x.id === instanceId);
-      state.instances[idx] = instance;
-    } else {
-      state.instances.push(instance);
-    }
-
-    saveState(state);
-    audit("instance.start", { instanceId, profileName: name, port: launchPort });
-    res.status(201).json(instance);
-  } catch (error) {
     res.status(502).json({ error: String(error.message || error) });
   }
 });
@@ -1576,6 +1642,42 @@ app.get("/v1/system/runtime-backends", requireAdminToken, async (_req, res) => {
   } catch (error) {
     res.status(503).json({
       error: "runtime backend detection failed",
+      message: String(error.message || error)
+    });
+  }
+});
+
+app.post("/v1/system/close", requireAdminToken, async (req, res) => {
+  const unloadModels = req.body?.unloadModels !== false;
+  const stopDaemon = req.body?.stopDaemon !== false;
+
+  try {
+    const data = await bridgeFetch("POST", "/v1/system/close", {
+      unloadModels,
+      stopDaemon
+    });
+
+    state.instances = state.instances.map((inst) => ({
+      ...inst,
+      state: "stopped",
+      pid: null,
+      inflightRequests: 0,
+      queueDepth: 0,
+      drain: false,
+      lastError: null,
+      updatedAt: now()
+    }));
+    saveState(state);
+    audit("system.close", { unloadModels, stopDaemon, instances: state.instances.length });
+
+    res.json({
+      success: true,
+      ...data,
+      instances: state.instances.length
+    });
+  } catch (error) {
+    res.status(503).json({
+      error: "system close failed",
       message: String(error.message || error)
     });
   }

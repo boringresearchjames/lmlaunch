@@ -25,6 +25,7 @@
       </div>
       <div class="topbar-actions">
         <button id="openHelp" class="help-icon" type="button" aria-label="Open help" title="Open help">?</button>
+        <button id="closeAll" class="close-icon" type="button" aria-label="Close all instances" title="Unload instances and stop server">X</button>
         <div class="status-chip">independent launcher • works with lm studio</div>
       </div>
     </header>
@@ -43,6 +44,12 @@
           <h3 class="launch-title">Launch New Instance</h3>
           <div id="launchStatus" class="launch-status">Idle</div>
           <div class="launch-grid">
+            <label class="launch-field launch-field-span-2">
+              Model
+              <select id="launchInstanceModel" class="launch-input">
+                <option value="">-- Select model --</option>
+              </select>
+            </label>
             <label class="launch-field">
               Instance Name
               <input id="launchName" placeholder="qwen-run-1" class="launch-input" />
@@ -51,44 +58,80 @@
               Port
               <input id="launchPort" type="number" value="1234" min="1" max="65535" class="launch-input" />
             </label>
-            <label class="launch-field launch-field-span-2">
-              Model
-              <select id="launchInstanceModel" class="launch-input">
-                <option value="">-- Select model --</option>
+            <label class="launch-field">
+              Hardware Runtime
+              <select id="launchRuntimeBackend" class="launch-input">
+                <option value="auto">Auto (detecting...)</option>
               </select>
             </label>
             <label class="launch-field launch-field-span-2">
               GPUs
               <select id="launchGpus" multiple class="launch-input launch-gpu-select">
               </select>
+              <small class="launch-field-help">Pick only the GPUs this instance can use.</small>
             </label>
-            <label class="launch-field">
-              Max Inflight
-              <input id="launchInflight" type="number" value="4" min="1" class="launch-input" />
-            </label>
-            <label class="launch-field launch-field-span-2">
-              Hardware Runtime
-              <select id="launchRuntimeBackend" class="launch-input">
-                <option value="auto">Auto (detecting...)</option>
-              </select>
+            <div class="launch-field launch-field-span-4">
               <small id="launchRuntimeDetail" class="launch-field-help">Detecting runtime versions...</small>
-            </label>
-            <label class="launch-field launch-field-span-2">
-              Context Window
-              <select id="launchContextPreset" class="launch-input">
-                <option value="auto" selected>Auto</option>
-                <option value="4096">4096</option>
-                <option value="8192">8192</option>
-                <option value="16384">16384</option>
-                <option value="32768">32768</option>
-                <option value="65536">65536</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-            <label class="launch-field">
-              Custom Context
-              <input id="launchContextCustom" type="number" min="256" step="256" placeholder="e.g. 24576" class="launch-input" disabled />
-            </label>
+            </div>
+            <details class="launch-advanced launch-field-span-4">
+              <summary>Advanced</summary>
+              <div class="launch-advanced-grid">
+                <label class="launch-field launch-field-span-2">
+                  Server Bind Host
+                  <select id="launchBindHost" class="launch-input">
+                    <option value="0.0.0.0" selected>0.0.0.0 (external accessible)</option>
+                    <option value="127.0.0.1">127.0.0.1 (localhost only)</option>
+                  </select>
+                </label>
+                <label class="launch-field launch-field-span-2">
+                  Context Window
+                  <select id="launchContextPreset" class="launch-input">
+                    <option value="auto" selected>Auto</option>
+                    <option value="4096">4096</option>
+                    <option value="8192">8192</option>
+                    <option value="16384">16384</option>
+                    <option value="32768">32768</option>
+                    <option value="65536">65536</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label class="launch-field">
+                  Custom Context
+                  <input id="launchContextCustom" type="number" min="256" step="256" placeholder="e.g. 24576" class="launch-input" disabled />
+                </label>
+                <label class="launch-field">
+                  Max Inflight
+                  <input id="launchInflight" type="number" value="4" min="1" class="launch-input" />
+                </label>
+                <label class="launch-field">
+                  Queue Limit
+                  <input id="launchQueueLimit" type="number" value="64" min="1" class="launch-input" />
+                </label>
+                <label class="launch-field">
+                  Max Parallel
+                  <input id="launchModelParallel" type="number" value="1" min="1" class="launch-input" />
+                </label>
+                <label class="launch-field">
+                  Model TTL (sec)
+                  <input id="launchModelTtl" type="number" min="1" placeholder="optional" class="launch-input" />
+                </label>
+                <label class="launch-field launch-field-span-2">
+                  Auto Restart
+                  <select id="launchRestartMode" class="launch-input">
+                    <option value="never" selected>Never</option>
+                    <option value="on-failure">On Failure</option>
+                  </select>
+                </label>
+                <label class="launch-field">
+                  Restart Retries
+                  <input id="launchRestartRetries" type="number" value="2" min="1" class="launch-input" />
+                </label>
+                <label class="launch-field">
+                  Restart Backoff (ms)
+                  <input id="launchRestartBackoffMs" type="number" value="3000" min="250" step="250" class="launch-input" />
+                </label>
+              </div>
+            </details>
             <div class="launch-actions-row">
               <button id="launchInstance" class="launch-start">Start</button>
             </div>
