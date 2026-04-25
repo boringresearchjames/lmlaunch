@@ -427,7 +427,7 @@ function parseRestartPolicy(value = {}) {
 function normalizeRuntimeBackend(value) {
   const raw = String(value || "auto").trim().toLowerCase();
   if (raw === "valkun") return "vulkan";
-  if (["auto", "cuda", "cpu", "vulkan"].includes(raw)) return raw;
+  if (["auto", "cuda", "cuda12", "cpu", "vulkan"].includes(raw)) return raw;
   return "auto";
 }
 

@@ -1245,102 +1245,63 @@ app.get("/v1/runtime/backends", async (_req, res) => {
       version: lmVersion,
       available: true,
       detail: "Let LM Studio choose the best GGUF runtime"
-    },
-    {
-      id: "gguf:cpu",
-      backend: "cpu",
-      label: `CPU llama.cpp (${osLabel})`,
-      version: lmVersion,
-      available: true,
-      detail: `CPU runtime on ${process.arch}`
     }
   ];
 
-  // Query all available runtimes from lms runtime ls
-  // Format: llama.cpp-<platform>-<backend>-<arch>@<version>
+  // Query all available runtime aliases from `lms runtime ls`.
+  // Typical format:
+  //   llama.cpp-linux-x86_64-nvidia-cuda-avx2@2.13.0    ✓   GGUF
   const runtimesList = await runCommand("lms", ["runtime", "ls"]);
   if (runtimesList.ok) {
-    const lines = (runtimesList.stdout || "").split("\n").map(l => l.trim()).filter(Boolean);
-    const cudaVersions = new Set();
-    const cuda12Versions = new Set();
-    let hasVulkan = false;
+    const lines = (runtimesList.stdout || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const parsedAliases = [];
 
     for (const line of lines) {
-      // Skip header lines
       if (line.includes("LLM ENGINE") || line.includes("SELECTED")) continue;
 
-      // Parse llama.cpp-<platform>-<backend>-<arch>@<version>
-      const match = line.match(/llama\.cpp-[^-]+-([^-@]+)(?:-[^@]*)?@([0-9.]+)/);
-      if (!match) continue;
+      const aliasMatch = line.match(/(llama\.cpp-[^\s]+)/i);
+      if (!aliasMatch) continue;
 
-      const backend = match[1]; // e.g., "nvidia-cuda", "nvidia-cuda12", "vulkan", "avx2"
-      const version = match[2]; // e.g., "2.13.0"
+      const alias = String(aliasMatch[1]).trim();
+      const version = (alias.match(/@([0-9.]+)$/) || [null, null])[1];
+      const selected = line.includes("✓");
 
-      if (backend.includes("cuda12")) {
-        cuda12Versions.add(String(version));
-      } else if (backend.includes("cuda")) {
-        cudaVersions.add(String(version));
-      } else if (backend.includes("vulkan")) {
-        hasVulkan = true;
+      let backend = "cpu";
+      if (alias.includes("nvidia-cuda12")) {
+        backend = "cuda12";
+      } else if (alias.includes("nvidia-cuda")) {
+        backend = "cuda";
+      } else if (alias.includes("vulkan")) {
+        backend = "vulkan";
       }
-    }
 
-    // Add CUDA versions (non-cuda12)
-    const sortedCudaVersions = Array.from(cudaVersions).sort((a, b) => {
-      const aparts = a.split(".").map(Number);
-      const bparts = b.split(".").map(Number);
-      for (let i = 0; i < Math.max(aparts.length, bparts.length); i++) {
-        const av = aparts[i] || 0;
-        const bv = bparts[i] || 0;
-        if (av !== bv) return bv - av;
-      }
-      return 0;
-    });
+      const labelByBackend = {
+        cpu: `CPU llama.cpp (${osLabel})`,
+        cuda: `CUDA llama.cpp (${osLabel})`,
+        cuda12: `CUDA 12 llama.cpp (${osLabel})`,
+        vulkan: `Vulkan llama.cpp (${osLabel})`
+      };
 
-    for (const version of sortedCudaVersions) {
-      const major = String(version).split(".")[0];
-      ggufRuntimes.push({
-        id: `gguf:cuda:${version}`,
-        backend: "cuda",
-        label: `CUDA ${major} llama.cpp (${osLabel})`,
-        version: lmVersion,
+      parsedAliases.push({
+        id: alias,
+        backend,
+        label: labelByBackend[backend] || `Runtime (${osLabel})`,
+        version: version || null,
         available: true,
-        detail: `CUDA ${version}`
+        detail: selected ? `${alias} (selected)` : alias
       });
     }
 
-    // Add CUDA 12 versions
-    const sortedCuda12Versions = Array.from(cuda12Versions).sort((a, b) => {
-      const aparts = a.split(".").map(Number);
-      const bparts = b.split(".").map(Number);
-      for (let i = 0; i < Math.max(aparts.length, bparts.length); i++) {
-        const av = aparts[i] || 0;
-        const bv = bparts[i] || 0;
-        if (av !== bv) return bv - av;
-      }
-      return 0;
-    });
-
-    for (const version of sortedCuda12Versions) {
+    if (parsedAliases.length > 0) {
+      ggufRuntimes.push(...parsedAliases);
+    } else {
       ggufRuntimes.push({
-        id: `gguf:cuda12:${version}`,
-        backend: "cuda12",
-        label: `CUDA 12 llama.cpp (${osLabel})`,
+        id: "gguf:cpu",
+        backend: "cpu",
+        label: `CPU llama.cpp (${osLabel})`,
         version: lmVersion,
         available: true,
-        detail: `CUDA 12 • ${version}`
-      });
-    }
-
-    // Add Vulkan if detected
-    if (hasVulkan) {
-      ggufRuntimes.push({
-        id: "gguf:vulkan",
-        backend: "vulkan",
-        label: `Vulkan llama.cpp (${osLabel})`,
-        version: lmVersion,
-        available: true,
-        detail: "Vulkan runtime"
+        detail: `CPU runtime on ${process.arch}`
       });
     }
   } else {

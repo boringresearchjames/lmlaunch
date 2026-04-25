@@ -247,6 +247,11 @@ function parseOptionalPositiveIntegerInput(id) {
 function normalizeRuntimeBackend(value) {
   const raw = String(value || "auto").trim().toLowerCase();
   if (raw === "valkun") return "vulkan";
+  if (raw.includes("cuda12")) return "cuda12";
+  if (raw.includes("cuda")) return "cuda";
+  if (raw.includes("vulkan")) return "vulkan";
+  if (raw.includes("cpu")) return "cpu";
+  if (raw.includes("auto")) return "auto";
   if (["auto", "cuda", "cpu", "vulkan"].includes(raw)) return raw;
   return "auto";
 }
@@ -277,7 +282,8 @@ function applyRuntimeBackendUi() {
 async function loadRuntimeBackends({ silent = true } = {}) {
   const select = $("launchRuntimeBackend");
   const detail = $("launchRuntimeDetail");
-  const current = normalizeRuntimeBackend(select.value || "auto");
+  const currentValue = String(select.value || "gguf:auto");
+  const currentBackend = normalizeRuntimeBackend(currentValue);
 
   try {
     const payload = await api("/v1/system/runtime-backends");
@@ -288,14 +294,15 @@ async function loadRuntimeBackends({ silent = true } = {}) {
 
     select.innerHTML = "";
     options.forEach((item) => {
-      const value = normalizeRuntimeBackend(item.id);
+      const value = String(item.id || "gguf:auto");
+      const backend = normalizeRuntimeBackend(value);
       const option = document.createElement("option");
       option.value = value;
       const versionText = item.version ? ` v${item.version}` : "";
-      option.textContent = `${item.label || value}${versionText}`;
+      option.textContent = `${item.label || backend}${versionText}`;
       option.disabled = item.available === false;
       option.dataset.selectionId = item.id || value;
-      option.dataset.runtimeLabel = item.label || value;
+      option.dataset.runtimeLabel = item.label || backend;
       option.dataset.detail = item.detail || "";
       select.appendChild(option);
     });
@@ -309,9 +316,15 @@ async function loadRuntimeBackends({ silent = true } = {}) {
       });
     }
 
-    select.value = Array.from(select.options).some((opt) => opt.value === current && !opt.disabled)
-      ? current
-      : "auto";
+    const exact = Array.from(select.options).find((opt) => opt.value === currentValue && !opt.disabled);
+    if (exact) {
+      select.value = exact.value;
+    } else {
+      const sameBackend = Array.from(select.options).find(
+        (opt) => !opt.disabled && normalizeRuntimeBackend(opt.value) === currentBackend
+      );
+      select.value = sameBackend?.value || select.options[0]?.value || "gguf:auto";
+    }
     if (detail) {
       const selectedOption = select.options[select.selectedIndex];
       detail.textContent = selectedOption?.dataset?.detail || "";
