@@ -296,37 +296,71 @@ async function sendInstanceDiagnosticPrompt() {
     const choice = response?.choices?.[0] || null;
     const msgContent = choice?.message?.content;
 
+    const pushText = (value) => {
+      if (typeof value === "string") {
+        const cleaned = value.trim();
+        if (cleaned) {
+          contentParts.push(cleaned);
+        }
+      }
+    };
+
     if (typeof msgContent === "string") {
-      contentParts.push(msgContent);
+      pushText(msgContent);
     } else if (Array.isArray(msgContent)) {
       for (const part of msgContent) {
         if (typeof part === "string") {
-          contentParts.push(part);
+          pushText(part);
           continue;
         }
-        const textValue = part?.text ?? part?.content ?? part?.value;
-        if (typeof textValue === "string") {
-          contentParts.push(textValue);
+        const textCandidates = [
+          part?.text,
+          part?.content,
+          part?.value,
+          part?.output_text,
+          part?.reasoning,
+          part?.reasoning_content
+        ];
+        for (const candidate of textCandidates) {
+          pushText(candidate);
+        }
+      }
+    } else if (msgContent && typeof msgContent === "object") {
+      const textCandidates = [
+        msgContent?.text,
+        msgContent?.content,
+        msgContent?.value,
+        msgContent?.output_text,
+        msgContent?.reasoning,
+        msgContent?.reasoning_content
+      ];
+      for (const candidate of textCandidates) {
+        pushText(candidate);
+      }
+      if (Array.isArray(msgContent?.parts)) {
+        for (const part of msgContent.parts) {
+          pushText(part?.text ?? part?.content ?? part?.value);
         }
       }
     }
 
-    if (contentParts.length === 0 && typeof choice?.text === "string") {
-      contentParts.push(choice.text);
-    }
-
-    if (contentParts.length === 0 && typeof response?.output_text === "string") {
-      contentParts.push(response.output_text);
+    if (contentParts.length === 0) {
+      pushText(choice?.text);
+      pushText(choice?.message?.reasoning_content);
+      pushText(choice?.message?.reasoning);
+      pushText(choice?.delta?.content);
+      pushText(response?.content);
+      pushText(response?.text);
+      pushText(response?.output_text);
+      pushText(response?.completion_message?.content);
+      pushText(response?.completion_message?.text);
     }
 
     if (contentParts.length === 0 && Array.isArray(response?.output)) {
       for (const item of response.output) {
         const segments = Array.isArray(item?.content) ? item.content : [];
         for (const seg of segments) {
-          const textValue = seg?.text ?? seg?.content ?? seg?.value;
-          if (typeof textValue === "string") {
-            contentParts.push(textValue);
-          }
+          pushText(seg?.text ?? seg?.content ?? seg?.value ?? seg?.output_text);
         }
       }
     }
@@ -334,19 +368,22 @@ async function sendInstanceDiagnosticPrompt() {
     const content = contentParts.join("\n").trim();
     const usage = response?.usage || null;
     const hasVisibleText = content.length > 0;
-    const responsePreview = hasVisibleText
-      ? content
-      : JSON.stringify(response, null, 2).slice(0, 4000);
+    const rawPayload = JSON.stringify(response, null, 2);
+    const responsePreview = hasVisibleText ? content : "(empty response text)";
 
     result.textContent = [
       `status: ok`,
       `instance: ${targetId}`,
       `model: ${modelId}`,
       `latency_ms: ${latencyMs}`,
+      `finish_reason: ${choice?.finish_reason || "n/a"}`,
       usage ? `usage: prompt=${usage.prompt_tokens || 0} completion=${usage.completion_tokens || 0} total=${usage.total_tokens || 0}` : "usage: n/a",
       "",
-      hasVisibleText ? "response:" : "response: (no text field extracted; showing raw payload)",
-      responsePreview || "(empty response)"
+      "response:",
+      responsePreview || "(empty response)",
+      "",
+      "raw_payload:",
+      rawPayload ? rawPayload.slice(0, 6000) : "(none)"
     ].join("\n");
     toast(`Diagnostic test succeeded for ${targetId}`);
   } catch (error) {

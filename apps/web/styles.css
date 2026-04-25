@@ -842,9 +842,10 @@ pre {
   width: min(720px, calc(100vw - 24px));
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: linear-gradient(165deg, rgba(13, 19, 35, 0.98), rgba(17, 25, 46, 0.98));
+  background: linear-gradient(165deg, rgba(8, 12, 24, 0.995), rgba(13, 19, 35, 0.995));
   color: var(--ink);
   padding: 0;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.55);
 }
 
 .instance-test-dialog::backdrop {
@@ -902,6 +903,10 @@ pre {
 .instance-test-result {
   margin-top: 10px;
   max-height: 320px;
+  white-space: pre-wrap;
+  color: #eaf2ff;
+  background: rgba(3, 7, 16, 0.88);
+  border: 1px solid rgba(159, 176, 216, 0.3);
 }
 
 @media (max-width: 1200px) {
