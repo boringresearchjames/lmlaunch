@@ -33,9 +33,26 @@ A fair question. The short answer is that LM Studio's `lms` CLI already solves a
 
 LM Launch treats LM Studio as a well-maintained runtime layer and focuses on the orchestration layer above it: fleet management, GPU partitioning, config profiles, health tracking, and the operator dashboard. If you want a minimal llama.cpp wrapper without the LM Studio dependency, that's a different project with a different set of tradeoffs.
 
+### vs. SGLang
+
+SGLang (from the LMSYS group) is a high-performance serving framework targeting large-scale production — RadixAttention prefix caching, prefill-decode disaggregation, speculative decoding, tensor/pipeline/expert parallelism. It runs on 400k+ GPUs in production and is arguably the best choice for maximizing throughput on a single very large model. Like vLLM, it requires CUDA, does not support GGUF, and is designed around a single model per deployment rather than a multi-model fleet on consumer or prosumer hardware. If you have a rack of H100s and want to serve one Llama 70B as fast as possible, SGLang is worth evaluating. If you have 4–8 consumer or data center GPUs and want different models running concurrently with minimal operational overhead, LM Launch is a better fit.
+
+### vs. GPUStack
+
+[GPUStack](https://github.com/gpustack/gpustack) is the closest conceptual peer — a Python-based GPU cluster manager that orchestrates vLLM and SGLang across multiple hosts. If you already run vLLM or SGLang and want cluster-level scheduling with a web UI, GPUStack is worth looking at. The key differences: GPUStack inherits vLLM/SGLang's hardware and quantization constraints (no GGUF, requires CUDA); it's oriented toward multi-host clusters rather than single-host GPU partitioning; and it's significantly heavier to deploy. LM Launch is a single-host tool that uses LM Studio as the runtime layer, trades cluster-scale for zero-CUDA simplicity and GGUF support.
+
 ### vs. Ollama
 
 Ollama serializes requests to one model at a time per runtime and is optimized for single-user local use. It has no concept of pinning a model to a specific GPU subset, no queue depth control, and no multi-instance fleet view. LM Launch is designed specifically for the case where you have multiple GPUs and want different models running concurrently on different GPU subsets with independent ports, context windows, and TTLs.
+
+### Relationship to LM Studio LM Link and llmster
+
+LM Studio now ships two relevant features: **llmster** (headless mode — runs LM Studio without a GUI, ideal for servers) and **LM Link** (cross-device routing — routes inference requests to other machines running LM Studio on your local network). LM Launch is complementary to both:
+
+- LM Launch uses `lms` to drive `llmster`-style headless instances on a single host
+- LM Link can route to any OpenAI-compatible endpoint, so an LM Launch fleet (multiple instances across ports) can be placed behind LM Link for cross-device routing if needed
+
+LM Launch does not compete with LM Link. The two tools operate at different layers: LM Launch manages instances on one host; LM Link routes requests across hosts.
 
 ### When LM Launch makes sense
 
@@ -58,6 +75,18 @@ Ollama serializes requests to one model at a time per runtime and is optimized f
 - Show logs and operator actions in a lightweight dashboard
 - Discover models and GPUs through the host bridge
 - Save/load named config profiles for repeatable multi-instance setups
+
+## Known Limitations and Roadmap Considerations
+
+Things that are currently out of scope or worth being aware of before adopting:
+
+- **Single-host only** — LM Launch manages instances on one machine. For multi-host GPU pools, combine it with LM Link (cross-device routing) or use GPUStack with vLLM/SGLang.
+- **No Prometheus/metrics endpoint** — Per-instance token throughput, queue depth, and latency metrics are not yet exposed. This is a common ask in the llama.cpp and serving community; a `/metrics` endpoint is a natural addition.
+- **LM Studio as a dependency** — LM Studio (and its `lms` CLI) must be installed on the host. LM Launch does not manage LM Studio installation or updates.
+- **LM Studio GPU tensor split bug** — As of early 2026, LM Studio has a known issue where some dual-GPU configurations (e.g. 2× RTX PRO 5000 Blackwell) resolve tensor split incorrectly, producing garbage output or crashes. LM Launch assigns GPUs per-instance via environment variables; if LM Studio has a tensor split bug for a given card pairing, that bug will manifest regardless of LM Launch.
+- **No model download management** — LM Launch does not download or manage model files. Models must already be in your LM Studio model library. Use `lms get` or the LM Studio UI to download models.
+- **No authentication per-instance** — The LM Launch API has a single bearer token. Individual instances expose unauthenticated OpenAI-compatible endpoints on their assigned ports. Place a reverse proxy in front if you need per-instance auth or TLS.
+- **No speculative decoding or prefix caching** — LM Launch relies on whatever llama.cpp runtime LM Studio provides. Advanced inference features like speculative decoding or RadixAttention-style prefix caching are not available through this stack.
 
 ## Architecture (Node Native)
 
