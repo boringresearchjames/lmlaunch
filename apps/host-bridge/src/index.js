@@ -1382,39 +1382,7 @@ app.get("/v1/runtime/backends", async (_req, res) => {
 
   return res.json({
     lmstudio_version: lmVersion,
-    gguf_runtimes: ggufRuntimes,
-    data: [
-      {
-        id: "auto",
-        label: "Auto",
-        available: true,
-        version: lmVersion,
-        detail: "Let LM Studio choose the best available backend"
-      },
-      {
-        id: "cuda",
-        label: "CUDA",
-        available: hasCuda,
-        version: cudaMatch ? `CUDA ${cudaMatch[1]}` : null,
-        detail: hasCuda
-          ? (driverMatch ? `NVIDIA driver ${driverMatch[1]}` : "NVIDIA runtime detected")
-          : "nvidia-smi unavailable"
-      },
-      {
-        id: "vulkan",
-        label: "Vulkan",
-        available: hasVulkan,
-        version: vulkanFirstLine,
-        detail: hasVulkan ? "vulkaninfo detected" : "vulkaninfo unavailable"
-      },
-      {
-        id: "cpu",
-        label: "CPU",
-        available: true,
-        version: process.arch,
-        detail: "CPU inference mode"
-      }
-    ]
+    gguf_runtimes: ggufRuntimes
   });
 });
 
