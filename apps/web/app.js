@@ -302,7 +302,10 @@ async function loadRuntimeBackends({ silent = true } = {}) {
       option.textContent = `${item.label || backend}${versionText}`;
       option.disabled = item.available === false;
       option.dataset.selectionId = item.id || value;
-      option.dataset.runtimeLabel = item.label || backend;
+      const preciseLabel = String(item.id || "").startsWith("llama.cpp-")
+        ? String(item.id)
+        : (item.label || backend);
+      option.dataset.runtimeLabel = preciseLabel;
       option.dataset.detail = item.detail || "";
       select.appendChild(option);
     });
@@ -712,7 +715,7 @@ async function refreshInstances() {
       const baseUrl = String(inst.baseUrl || `http://${inst.host || "127.0.0.1"}:${inst.port}`);
       const proxyBaseUrl = String(inst.proxyBaseUrl || `${settings.apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`);
       const runtimeBackend = normalizeRuntimeBackend(inst.runtime?.hardware || "auto");
-      const runtimeLabel = inst.runtime?.label || runtimeBackend;
+      const runtimeLabel = inst.runtime?.selection || inst.runtime?.label || runtimeBackend;
       const isStopped = String(inst.state || "").toLowerCase() === "stopped";
       const primaryAction = isStopped
         ? `<button class="delete" data-action="delete" data-id="${inst.id}">Remove</button>`

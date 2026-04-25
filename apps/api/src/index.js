@@ -1345,7 +1345,7 @@ app.post("/v1/instances/start", async (req, res) => {
       serverArgs: runtimeArgs,
       hardware: runtimeBackend,
       selection: runtimeSelection || null,
-      label: runtimeLabel || null
+      label: runtimeLabel || runtimeSelection || null
     },
     host: launchHost,
     bindHost,
