@@ -615,6 +615,13 @@ function stripAnsiAndControl(value) {
     .trim();
 }
 
+function isLmsCliPasskeyMismatchError(text) {
+  const msg = String(text || "").toLowerCase();
+  return msg.includes("invalid passkey for lms cli client")
+    || msg.includes("using the lms shipped with lm studio")
+    || msg.includes("failed to authenticate");
+}
+
 async function selectRuntime(runtimeId, env, instanceId = null) {
   if (!runtimeId || runtimeId === "auto") {
     return;
@@ -636,13 +643,24 @@ async function selectRuntime(runtimeId, env, instanceId = null) {
       });
     }
   } catch (error) {
+    const errorText = String(error?.message || error);
+    if (isLmsCliPasskeyMismatchError(errorText)) {
+      if (instanceId) {
+        writeMeta(instanceId, "instance.runtime.selection.skipped", {
+          runtime_id: runtimeIdStr,
+          reason: "lms_cli_passkey_mismatch",
+          error: errorText
+        });
+      }
+      return;
+    }
     if (instanceId) {
       writeMeta(instanceId, "instance.runtime.selection.failed", {
         runtime_id: runtimeIdStr,
-        error: String(error?.message || error)
+        error: errorText
       });
     }
-    throw new Error(`Failed to select runtime ${runtimeIdStr}: ${error?.message || error}`);
+    throw new Error(`Failed to select runtime ${runtimeIdStr}: ${errorText}`);
   }
 }
 
