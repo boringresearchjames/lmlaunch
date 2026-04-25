@@ -96,6 +96,7 @@ Roughly prioritized:
 
 - [ ] **Multi-host support** — extend the bridge concept to remote hosts so a single LM Launch API can manage instances across multiple machines. Natural next step for GPU clusters that exceed one box.
 - [ ] **NUMA-aware instance pinning** — on multi-socket systems, allow per-instance CPU and memory affinity (for example `numactl`/cpuset style controls) so each instance can stay local to the CPU node nearest its assigned GPU(s).
+- [ ] **Runtime diagnostics and fallback matrix** — investigate why Vulkan runtime is unavailable on Linux hosts, why alternative CUDA llama.cpp runtime builds cannot currently be selected, and harden proxy/runtime failure handling when specific backends fail model startup or inference.
 - [ ] **Prometheus `/metrics` endpoint** — expose per-instance token throughput, queue depth, latency p50/p95, and GPU memory as a Prometheus scrape target. Useful for Grafana dashboards and alerting on unhealthy instances.
 - [ ] **Reverse proxy / load balancer manifest** — emit a ready-made nginx/Caddy/Traefik config or a simple built-in round-robin proxy across healthy instances of the same model, so clients can hit one endpoint and LM Launch routes the request.
 - [ ] **Startup timeout and smoke check config** — currently readiness polling is fixed; expose timeout, retry interval, and expected response schema as per-instance options.

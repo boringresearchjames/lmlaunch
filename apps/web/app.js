@@ -697,7 +697,7 @@ async function refreshInstances() {
       const normalizedState = String(inst.state || "unknown").toLowerCase();
       tr.setAttribute("data-state", normalizedState);
       const baseUrl = String(inst.baseUrl || `http://${inst.host || "127.0.0.1"}:${inst.port}`);
-      const proxyBaseUrl = `${settings.apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`;
+      const proxyBaseUrl = String(inst.proxyBaseUrl || `${settings.apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`);
       const runtimeBackend = normalizeRuntimeBackend(inst.runtime?.hardware || "auto");
       const runtimeLabel = inst.runtime?.label || runtimeBackend;
       const isStopped = String(inst.state || "").toLowerCase() === "stopped";

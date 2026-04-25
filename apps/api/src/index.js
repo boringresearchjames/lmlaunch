@@ -620,6 +620,11 @@ function instancePublicBaseUrl(instance) {
   return `http://${resolveAdvertisedHost(instance)}:${instance.port}`;
 }
 
+function apiPublicBaseUrl() {
+  const host = publicHostOverride || detectMachineIpv4() || "127.0.0.1";
+  return `http://${host}:${port}`;
+}
+
 function updateInstanceRequestMetrics(instance, delta = 0) {
   if (!instance || !Number.isFinite(delta) || delta === 0) return;
   const current = Number(instance.inflightRequests || 0);
@@ -1197,6 +1202,7 @@ app.delete("/v1/profiles/:id", (req, res) => {
 });
 
 app.get("/v1/instances", async (_req, res) => {
+  const apiBase = apiPublicBaseUrl();
   let gpuData = [];
   try {
     const bridgeState = await bridgeFetch("GET", "/v1/instances");
@@ -1254,7 +1260,8 @@ app.get("/v1/instances", async (_req, res) => {
     apiKeyApplied: false,
     instanceApiKey: null,
     advertisedHost: resolveAdvertisedHost(inst),
-    baseUrl: instancePublicBaseUrl(inst)
+    baseUrl: instancePublicBaseUrl(inst),
+    proxyBaseUrl: `${apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`
   }));
 
   res.json({ data, gpus: gpuData });
@@ -1736,9 +1743,11 @@ app.get("/v1/instances/:id/connection", (req, res) => {
   const instance = state.instances.find((x) => x.id === req.params.id);
   if (!instance) return res.status(404).json({ error: "instance not found" });
 
+  const apiBase = apiPublicBaseUrl();
   const base = instancePublicBaseUrl(instance);
   const runtimeBase = instanceBaseUrl(instance);
   const globalAuthRequired = isGlobalApiKeyRequired();
+  const proxyBase = `${apiBase}/v1/instances/${encodeURIComponent(instance.id)}/proxy/v1`;
   res.json({
     instance_id: instance.id,
     base_url: base,
@@ -1754,16 +1763,16 @@ app.get("/v1/instances/:id/connection", (req, res) => {
         type: "none",
         required: false
       },
-    proxy_base_url: `/v1/instances/${instance.id}/proxy/v1`,
+    proxy_base_url: proxyBase,
     urls: {
       models: `${base}/v1/models`,
       chat_completions: `${base}/v1/chat/completions`,
       responses: `${base}/v1/responses`
     },
     proxy_urls: {
-      models: `/v1/instances/${instance.id}/proxy/v1/models`,
-      chat_completions: `/v1/instances/${instance.id}/proxy/v1/chat/completions`,
-      responses: `/v1/instances/${instance.id}/proxy/v1/responses`
+      models: `${proxyBase}/models`,
+      chat_completions: `${proxyBase}/chat/completions`,
+      responses: `${proxyBase}/responses`
     },
     profile_model: null,
     effective_model: instance.effectiveModel,
