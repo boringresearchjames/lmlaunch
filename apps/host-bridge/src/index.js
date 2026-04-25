@@ -608,11 +608,20 @@ async function ensureServerStartWithArgs(env, args, instanceId = null, options =
   });
 }
 
+function stripAnsiAndControl(value) {
+  return String(value || "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim();
+}
+
 async function selectRuntime(runtimeId, env, instanceId = null) {
   if (!runtimeId || runtimeId === "auto") {
     return;
   }
-  const runtimeIdStr = String(runtimeId || "").trim();
+  const runtimeIdStrRaw = stripAnsiAndControl(runtimeId);
+  const runtimeAliasMatch = runtimeIdStrRaw.match(/(llama\.cpp-[a-z0-9._-]+@[0-9]+(?:\.[0-9]+)*)/i);
+  const runtimeIdStr = runtimeAliasMatch ? runtimeAliasMatch[1] : runtimeIdStrRaw;
   if (!runtimeIdStr) {
     return;
   }
@@ -1253,13 +1262,16 @@ app.get("/v1/runtime/backends", async (_req, res) => {
   //   llama.cpp-linux-x86_64-nvidia-cuda-avx2@2.13.0    ✓   GGUF
   const runtimesList = await runCommand("lms", ["runtime", "ls"]);
   if (runtimesList.ok) {
-    const lines = (runtimesList.stdout || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const lines = (runtimesList.stdout || "")
+      .split("\n")
+      .map((l) => stripAnsiAndControl(l))
+      .filter(Boolean);
     const parsedAliases = [];
 
     for (const line of lines) {
       if (line.includes("LLM ENGINE") || line.includes("SELECTED")) continue;
 
-      const aliasMatch = line.match(/(llama\.cpp-[^\s]+)/i);
+      const aliasMatch = line.match(/(llama\.cpp-[a-z0-9._-]+@[0-9]+(?:\.[0-9]+)*)/i);
       if (!aliasMatch) continue;
 
       const alias = String(aliasMatch[1]).trim();
