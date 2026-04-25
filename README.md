@@ -22,6 +22,17 @@ vLLM is excellent for high-throughput serving of a single model on a single node
 
 Running `llama-server` manually on different ports works, but you have to manage process lifecycle, log tailing, GPU pinning, and health checks yourself. LM Launch wraps all of that: it enforces `CUDA_VISIBLE_DEVICES` and seven other device-visibility env vars per instance, runs pre/post memory snapshots to catch GPU bleed, monitors readiness, and can auto-restart crashed instances with configurable backoff — all from a browser UI.
 
+### Why not wrap llama.cpp directly instead of going through LM Studio?
+
+A fair question. The short answer is that LM Studio's `lms` CLI already solves a lot of hard problems that would need to be re-solved to wrap `llama-server` directly:
+
+- **Model discovery** — `lms` knows where your model library lives and resolves model IDs to file paths. Wrapping llama.cpp directly means you own path resolution, model scanning, and metadata parsing across GGUF split files.
+- **Runtime selection** — LM Studio ships and manages multiple llama.cpp builds (AVX2, CUDA, Metal, Vulkan, ROCm, etc.) and selects the right one for the hardware automatically. Doing this yourself means bundling or locating the right binary per platform.
+- **Build maintenance** — llama.cpp releases break API compatibility regularly. LM Studio tracks upstream and ships tested builds; you'd be on your own keeping a pinned or rolling llama.cpp build working across CUDA driver versions and OS updates.
+- **Context window and sampling defaults** — LM Studio applies per-model defaults (RoPE scaling, context limits, recommended sampler settings) derived from model metadata. Raw llama.cpp requires you to pass all of this explicitly or accept its own defaults.
+
+LM Launch treats LM Studio as a well-maintained runtime layer and focuses on the orchestration layer above it: fleet management, GPU partitioning, config profiles, health tracking, and the operator dashboard. If you want a minimal llama.cpp wrapper without the LM Studio dependency, that's a different project with a different set of tradeoffs.
+
 ### vs. Ollama
 
 Ollama serializes requests to one model at a time per runtime and is optimized for single-user local use. It has no concept of pinning a model to a specific GPU subset, no queue depth control, and no multi-instance fleet view. LM Launch is designed specifically for the case where you have multiple GPUs and want different models running concurrently on different GPU subsets with independent ports, context windows, and TTLs.
