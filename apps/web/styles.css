@@ -838,6 +838,72 @@ pre {
   backdrop-filter: blur(10px);
 }
 
+.instance-test-dialog {
+  width: min(720px, calc(100vw - 24px));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(13, 19, 35, 0.98), rgba(17, 25, 46, 0.98));
+  color: var(--ink);
+  padding: 0;
+}
+
+.instance-test-dialog::backdrop {
+  background: rgba(2, 5, 11, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.instance-test-form {
+  padding: 14px;
+}
+
+.instance-test-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.instance-test-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.instance-test-close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.instance-test-meta {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.instance-test-input {
+  min-height: 96px;
+}
+
+.instance-test-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.instance-test-result {
+  margin-top: 10px;
+  max-height: 320px;
+}
+
 @media (max-width: 1200px) {
   .layout {
     grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -976,5 +1042,9 @@ pre {
     right: 12px;
     max-width: unset;
     bottom: 12px;
+  }
+
+  .instance-test-actions button {
+    width: 100%;
   }
 }

@@ -207,6 +207,28 @@
 
     <pre id="toast"></pre>
 
+    <dialog id="instanceTestDialog" class="instance-test-dialog">
+      <form method="dialog" class="instance-test-form" id="instanceTestForm">
+        <div class="instance-test-header">
+          <h3 id="instanceTestTitle">Instance Diagnostic Test</h3>
+          <button type="button" id="instanceTestClose" class="instance-test-close" aria-label="Close diagnostic dialog">X</button>
+        </div>
+        <p id="instanceTestMeta" class="instance-test-meta">Target: -</p>
+
+        <label class="launch-field">
+          Prompt
+          <textarea id="instanceTestPrompt" class="instance-test-input" rows="4">Reply exactly with: OK</textarea>
+        </label>
+
+        <div class="instance-test-actions">
+          <button type="button" id="instanceTestSend">Send Test Prompt</button>
+          <button type="button" id="instanceTestReset" class="copy">Reset Prompt</button>
+        </div>
+
+        <pre id="instanceTestResult" class="instance-test-result">No request sent yet.</pre>
+      </form>
+    </dialog>
+
     <script src="app.js"></script>
   </body>
 </html>

@@ -24,6 +24,7 @@ let gpuTelemetryCache = [];
 let runtimeBackendsCache = [];
 let operationPending = null;
 let operationStatusTimer = null;
+let instanceTestTargetId = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -203,6 +204,121 @@ function copy(value) {
   navigator.clipboard.writeText(value)
     .then(() => toast(`Copied: ${value}`))
     .catch(() => toast("Copy failed — clipboard not available"));
+}
+
+function closeInstanceTestDialog() {
+  const dialog = $("instanceTestDialog");
+  if (!dialog) return;
+  if (typeof dialog.close === "function") {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
+
+function openInstanceTestDialog(instanceId) {
+  const dialog = $("instanceTestDialog");
+  const meta = $("instanceTestMeta");
+  const result = $("instanceTestResult");
+  if (!dialog || !meta || !result) {
+    toast("Diagnostic dialog unavailable");
+    return;
+  }
+
+  const inst = instancesCache.find((x) => String(x.id) === String(instanceId));
+  if (!inst) {
+    toast("Instance not found for diagnostic test");
+    return;
+  }
+
+  instanceTestTargetId = String(instanceId);
+  meta.textContent = `Target: ${inst.id} • model ${inst.effectiveModel || "unknown"} • port ${inst.port}`;
+  result.textContent = "Ready. Click Send Test Prompt.";
+
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "open");
+  }
+}
+
+async function sendInstanceDiagnosticPrompt() {
+  const result = $("instanceTestResult");
+  const sendBtn = $("instanceTestSend");
+  const promptInput = $("instanceTestPrompt");
+  const targetId = String(instanceTestTargetId || "").trim();
+
+  if (!targetId) {
+    toast("Select an instance first");
+    return;
+  }
+
+  const inst = instancesCache.find((x) => String(x.id) === targetId);
+  if (!inst) {
+    toast("Selected instance is no longer available");
+    return;
+  }
+
+  const prompt = String(promptInput?.value || "").trim();
+  if (!prompt) {
+    toast("Prompt cannot be empty");
+    return;
+  }
+
+  const modelId = String(inst.effectiveModel || inst.pendingModel || "").trim();
+  if (!modelId) {
+    toast("Instance model is unknown; cannot send diagnostic prompt");
+    return;
+  }
+
+  const payload = {
+    model: modelId,
+    messages: [
+      { role: "system", content: "You are a concise diagnostics assistant." },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0,
+    max_tokens: 64,
+    stream: false
+  };
+
+  sendBtn.disabled = true;
+  const startedAt = Date.now();
+  result.textContent = "Running diagnostic request...";
+
+  try {
+    const response = await api(`/v1/instances/${encodeURIComponent(targetId)}/proxy/v1/chat/completions`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    const latencyMs = Date.now() - startedAt;
+    const content = String(response?.choices?.[0]?.message?.content || "").trim();
+    const usage = response?.usage || null;
+
+    result.textContent = [
+      `status: ok`,
+      `instance: ${targetId}`,
+      `model: ${modelId}`,
+      `latency_ms: ${latencyMs}`,
+      usage ? `usage: prompt=${usage.prompt_tokens || 0} completion=${usage.completion_tokens || 0} total=${usage.total_tokens || 0}` : "usage: n/a",
+      "",
+      "response:",
+      content || "(empty response)"
+    ].join("\n");
+    toast(`Diagnostic test succeeded for ${targetId}`);
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt;
+    result.textContent = [
+      `status: failed`,
+      `instance: ${targetId}`,
+      `latency_ms: ${latencyMs}`,
+      "",
+      `error: ${error.message}`
+    ].join("\n");
+    toast(`Diagnostic test failed: ${error.message}`);
+  } finally {
+    sendBtn.disabled = false;
+  }
 }
 
 function escapeHtml(value) {
@@ -729,6 +845,9 @@ async function refreshInstances() {
       const removeSecondaryAction = isStopped
         ? ""
         : `<button class="delete" data-action="delete" data-id="${inst.id}">Remove</button>`;
+      const testAction = isStopped
+        ? ""
+        : `<button class="copy" data-action="test" data-id="${inst.id}">Test Prompt</button>`;
 
       tr.innerHTML = `
         <td>${inst.id}</td>
@@ -750,6 +869,7 @@ async function refreshInstances() {
           <details class="action-more" data-instance-id="${inst.id}" ${openOptionsByInstance.has(String(inst.id)) ? "open" : ""}>
             <summary>Options</summary>
             <div class="action-secondary">
+              ${testAction}
               ${drainAction}
               ${forceStopAction}
               <div class="action-copy-grid">
@@ -811,6 +931,9 @@ async function refreshInstances() {
             });
           } else if (action === "copy-base" || action === "copy-chat" || action === "copy-model") {
             copy(btn.getAttribute("data-copy") || "");
+            return;
+          } else if (action === "test") {
+            openInstanceTestDialog(id);
             return;
           }
 
@@ -1044,6 +1167,37 @@ $("launchInstanceModel").onchange = () => {
     nameInput.value = base;
   }
 };
+
+if ($("instanceTestSend")) {
+  $("instanceTestSend").onclick = () => {
+    void sendInstanceDiagnosticPrompt();
+  };
+}
+
+if ($("instanceTestReset")) {
+  $("instanceTestReset").onclick = () => {
+    $("instanceTestPrompt").value = "Reply exactly with: OK";
+    $("instanceTestResult").textContent = "Prompt reset.";
+  };
+}
+
+if ($("instanceTestClose")) {
+  $("instanceTestClose").onclick = closeInstanceTestDialog;
+}
+
+if ($("instanceTestDialog")) {
+  $("instanceTestDialog").addEventListener("click", (event) => {
+    const dialog = $("instanceTestDialog");
+    const rect = dialog.getBoundingClientRect();
+    const inside = rect.top <= event.clientY
+      && event.clientY <= rect.bottom
+      && rect.left <= event.clientX
+      && event.clientX <= rect.right;
+    if (!inside) {
+      closeInstanceTestDialog();
+    }
+  });
+}
 
 syncGlobalApiTokenInput();
 void refreshGlobalApiAccess();
