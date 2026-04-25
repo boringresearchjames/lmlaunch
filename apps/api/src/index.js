@@ -456,6 +456,7 @@ function nextUniqueInstanceId(baseId, existingIds = new Set()) {
 function backendFromRuntimeSelection(value) {
   const raw = String(value || "").toLowerCase();
   if (!raw) return null;
+  if (raw.includes(":cuda12") || raw.includes("cuda12")) return "cuda12";
   if (raw.includes(":cuda") || raw.includes("cuda")) return "cuda";
   if (raw.includes(":vulkan") || raw.includes("vulkan") || raw.includes("valkun")) return "vulkan";
   if (raw.includes(":cpu") || raw.includes("cpu")) return "cpu";

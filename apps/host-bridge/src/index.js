@@ -125,7 +125,7 @@ function resolveServerArgs(profile) {
 function normalizeRuntimeBackend(value) {
   const raw = String(value || "auto").trim().toLowerCase();
   if (raw === "valkun") return "vulkan";
-  if (["auto", "cuda", "cpu", "vulkan"].includes(raw)) return raw;
+  if (["auto", "cuda", "cuda12", "cpu", "vulkan"].includes(raw)) return raw;
   return "auto";
 }
 
@@ -166,7 +166,7 @@ function buildRuntimeEnv(baseEnv, profile) {
     return { env, backend, gpuIds };
   }
 
-  if (backend === "cuda") {
+  if (backend === "cuda" || backend === "cuda12") {
     applyGpuVisibilityEnv(env, gpuIds);
     env.LMSTUDIO_RUNTIME_BACKEND = "cuda";
     env.LMSTUDIO_COMPUTE_BACKEND = "cuda";
@@ -1256,26 +1256,48 @@ app.get("/v1/runtime/backends", async (_req, res) => {
     }
   ];
 
-  // Query all available CUDA versions from lms runtime ls
+  // Query all available runtimes from lms runtime ls
+  // Format: llama.cpp-<platform>-<backend>-<arch>@<version>
   const runtimesList = await runCommand("lms", ["runtime", "ls"]);
   if (runtimesList.ok) {
     const lines = (runtimesList.stdout || "").split("\n").map(l => l.trim()).filter(Boolean);
     const cudaVersions = new Set();
+    const cuda12Versions = new Set();
     let hasVulkan = false;
 
     for (const line of lines) {
-      const cudaMatch = line.match(/cuda[:\s]+([0-9.]+)/i);
-      const vulkanMatch = line.match(/vulkan/i);
-      if (cudaMatch) {
-        cudaVersions.add(String(cudaMatch[1]));
-      }
-      if (vulkanMatch) {
+      // Skip header lines
+      if (line.includes("LLM ENGINE") || line.includes("SELECTED")) continue;
+
+      // Parse llama.cpp-<platform>-<backend>-<arch>@<version>
+      const match = line.match(/llama\.cpp-[^-]+-([^-@]+)(?:-[^@]*)?@([0-9.]+)/);
+      if (!match) continue;
+
+      const backend = match[1]; // e.g., "nvidia-cuda", "nvidia-cuda12", "vulkan", "avx2"
+      const version = match[2]; // e.g., "2.13.0"
+
+      if (backend.includes("cuda12")) {
+        cuda12Versions.add(String(version));
+      } else if (backend.includes("cuda")) {
+        cudaVersions.add(String(version));
+      } else if (backend.includes("vulkan")) {
         hasVulkan = true;
       }
     }
 
-    // Add all detected CUDA versions
-    for (const version of Array.from(cudaVersions).sort().reverse()) {
+    // Add CUDA versions (non-cuda12)
+    const sortedCudaVersions = Array.from(cudaVersions).sort((a, b) => {
+      const aparts = a.split(".").map(Number);
+      const bparts = b.split(".").map(Number);
+      for (let i = 0; i < Math.max(aparts.length, bparts.length); i++) {
+        const av = aparts[i] || 0;
+        const bv = bparts[i] || 0;
+        if (av !== bv) return bv - av;
+      }
+      return 0;
+    });
+
+    for (const version of sortedCudaVersions) {
       const major = String(version).split(".")[0];
       ggufRuntimes.push({
         id: `gguf:cuda:${version}`,
@@ -1284,6 +1306,29 @@ app.get("/v1/runtime/backends", async (_req, res) => {
         version: lmVersion,
         available: true,
         detail: `CUDA ${version}`
+      });
+    }
+
+    // Add CUDA 12 versions
+    const sortedCuda12Versions = Array.from(cuda12Versions).sort((a, b) => {
+      const aparts = a.split(".").map(Number);
+      const bparts = b.split(".").map(Number);
+      for (let i = 0; i < Math.max(aparts.length, bparts.length); i++) {
+        const av = aparts[i] || 0;
+        const bv = bparts[i] || 0;
+        if (av !== bv) return bv - av;
+      }
+      return 0;
+    });
+
+    for (const version of sortedCuda12Versions) {
+      ggufRuntimes.push({
+        id: `gguf:cuda12:${version}`,
+        backend: "cuda12",
+        label: `CUDA 12 llama.cpp (${osLabel})`,
+        version: lmVersion,
+        available: true,
+        detail: `CUDA 12 • ${version}`
       });
     }
 
