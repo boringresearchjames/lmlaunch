@@ -1485,7 +1485,8 @@ app.get("/v1/instances", async (_req, res) => {
           utilization_percent: gpu.utilization_percent,
           temperature_c: gpu.temperature_c ?? null,
           graphics_clock_mhz: gpu.graphics_clock_mhz ?? null,
-          memory_clock_mhz: gpu.memory_clock_mhz ?? null
+          memory_clock_mhz: gpu.memory_clock_mhz ?? null,
+          power_draw_w: gpu.power_draw_w ?? null
         }));
       return {
         ...inst,
