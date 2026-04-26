@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — LlamaFleet one-line installer for Ubuntu (systemd).
+# install.sh — LlamaFleet one-line installer for Linux (systemd).
 #
 # Usage:
 #   curl -fsSL https://github.com/boringresearchjames/llamafleet/releases/latest/download/install.sh | sudo bash
@@ -8,6 +8,8 @@
 #   1. Downloads the latest LlamaFleet release tarball to /opt/llamafleet
 #   2. Runs install-ubuntu-systemd.sh (creates service user, systemd unit, env file)
 #   3. Runs install-llama-server.sh (detects GPU, downloads matching llama-server binary)
+#
+# Supports: Debian/Ubuntu (apt-get), Fedora/RHEL/CentOS (dnf/yum), Arch (pacman), openSUSE (zypper).
 
 set -euo pipefail
 
@@ -29,18 +31,62 @@ ok()   { printf '\033[1;32m[LlamaFleet]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[LlamaFleet]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[LlamaFleet]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 
+# ── package manager abstraction ──────────────────────────────────────────────
+
+detect_pkg_manager() {
+  if   command -v apt-get >/dev/null 2>&1; then echo "apt-get"
+  elif command -v dnf     >/dev/null 2>&1; then echo "dnf"
+  elif command -v yum     >/dev/null 2>&1; then echo "yum"
+  elif command -v pacman  >/dev/null 2>&1; then echo "pacman"
+  elif command -v zypper  >/dev/null 2>&1; then echo "zypper"
+  else echo "unknown"
+  fi
+}
+
+install_pkg() {
+  local pkg="$1"
+  case "$(detect_pkg_manager)" in
+    apt-get) apt-get install -y -qq "$pkg" ;;
+    dnf)     dnf install -y -q  "$pkg" ;;
+    yum)     yum install -y -q  "$pkg" ;;
+    pacman)  pacman -S --noconfirm --quiet "$pkg" ;;
+    zypper)  zypper install -y -q "$pkg" ;;
+    *)       warn "Unknown package manager — install $pkg manually."; return 1 ;;
+  esac
+}
+
 # ── check dependencies ───────────────────────────────────────────────────────
 
 for cmd in curl tar node; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     case "$cmd" in
-      curl) apt-get install -y -qq curl ;;
-      tar)  apt-get install -y -qq tar ;;
+      curl) install_pkg curl ;;
+      tar)  install_pkg tar  ;;
       node)
-        die "Node.js (>=18) is required but not installed.
+        # Distro-specific Node.js install guidance.
+        case "$(detect_pkg_manager)" in
+          apt-get)
+            die "Node.js (>=18) is required but not installed.
   Install it first:
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y nodejs"
+    sudo apt-get install -y nodejs" ;;
+          dnf|yum)
+            die "Node.js (>=18) is required but not installed.
+  Install it first:
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
+    sudo $(detect_pkg_manager) install -y nodejs" ;;
+          pacman)
+            die "Node.js (>=18) is required but not installed.
+  Install it first:
+    sudo pacman -S nodejs npm" ;;
+          zypper)
+            die "Node.js (>=18) is required but not installed.
+  Install it first:
+    sudo zypper install -y nodejs22 npm22" ;;
+          *)
+            die "Node.js (>=18) is required but not installed.
+  See https://nodejs.org/en/download/package-manager" ;;
+        esac
         ;;
     esac
   fi

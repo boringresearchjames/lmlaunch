@@ -26,6 +26,29 @@ ok()   { printf '\033[1;32m[llama-server]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[llama-server]\033[0m WARNING: %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[llama-server]\033[0m ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Package manager abstraction (Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE).
+detect_pkg_manager() {
+  if   command -v apt-get >/dev/null 2>&1; then echo "apt-get"
+  elif command -v dnf     >/dev/null 2>&1; then echo "dnf"
+  elif command -v yum     >/dev/null 2>&1; then echo "yum"
+  elif command -v pacman  >/dev/null 2>&1; then echo "pacman"
+  elif command -v zypper  >/dev/null 2>&1; then echo "zypper"
+  else echo "unknown"
+  fi
+}
+
+install_pkg() {
+  local pkg="$1"
+  case "$(detect_pkg_manager)" in
+    apt-get) apt-get install -y -qq "$pkg" ;;
+    dnf)     dnf install -y -q  "$pkg" ;;
+    yum)     yum install -y -q  "$pkg" ;;
+    pacman)  pacman -S --noconfirm --quiet "$pkg" ;;
+    zypper)  zypper install -y -q "$pkg" ;;
+    *)       warn "Unknown package manager — install $pkg manually."; return 1 ;;
+  esac
+}
+
 # Write or update a key=value pair in the llamafleet env file.
 write_env_var() {
   local key="$1" val="$2"
@@ -57,7 +80,7 @@ fi
 for cmd in curl unzip; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     log "Installing $cmd ..."
-    apt-get install -y -qq "$cmd"
+    install_pkg "$cmd"
   fi
 done
 
@@ -174,7 +197,7 @@ detect_rocm() {
 detect_vulkan() {
   if command -v vulkaninfo >/dev/null 2>&1 \
     || command -v vkcube >/dev/null 2>&1 \
-    || dpkg -l libvulkan1 >/dev/null 2>&1; then
+    || ldconfig -p 2>/dev/null | grep -q 'libvulkan\.so'; then
     log "Vulkan runtime detected."
     BACKEND="vulkan"
     return 0
@@ -182,7 +205,7 @@ detect_vulkan() {
   # GPU present but no Vulkan runtime installed — still use Vulkan build and let the user sort the runtime.
   if command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | grep -qiE 'VGA|3D|Display'; then
     warn "GPU detected but Vulkan runtime not found. Using Vulkan build."
-    warn "To install Vulkan: sudo apt install libvulkan1 vulkan-tools"
+    warn "Install Vulkan runtime (e.g., libvulkan1 / vulkan-loader / lib32-vulkan-icd-loader depending on distro)."
     BACKEND="vulkan"
     return 0
   fi
