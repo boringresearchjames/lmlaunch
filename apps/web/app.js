@@ -635,10 +635,12 @@ function normalizeRuntimeBackend(value) {
   if (raw === "valkun") return "vulkan";
   if (raw === "cuda_full" || raw.includes("cuda12")) return "cuda_full";
   if (raw.includes("cuda")) return "cuda";
+  if (raw === "rocm_full") return "rocm_full";
+  if (raw.includes("rocm")) return "rocm";
   if (raw.includes("vulkan")) return "vulkan";
   if (raw.includes("cpu")) return "cpu";
   if (raw.includes("auto")) return "auto";
-  if (["auto", "cuda", "cuda_full", "cpu", "vulkan"].includes(raw)) return raw;
+  if (["auto", "cuda", "cuda_full", "rocm", "rocm_full", "cpu", "vulkan"].includes(raw)) return raw;
   return "auto";
 }
 

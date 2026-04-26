@@ -127,7 +127,7 @@ function resolveServerArgs(profile) {
   }
 
   const backend = normalizeRuntimeBackend(profile?.runtime?.hardware);
-  if (backend === "cuda_full") {
+  if (backend === "cuda_full" || backend === "rocm_full") {
     const hasNgl = args.some((arg, idx) =>
       arg === "--n-gpu-layers" || arg === "-ngl" ||
       (idx > 0 && (args[idx - 1] === "--n-gpu-layers" || args[idx - 1] === "-ngl"))
@@ -143,7 +143,7 @@ function resolveServerArgs(profile) {
 function normalizeRuntimeBackend(value) {
   const raw = String(value || "auto").trim().toLowerCase();
   if (raw === "valkun") return "vulkan";
-  if (["auto", "cuda", "cuda_full", "cpu", "vulkan"].includes(raw)) return raw;
+  if (["auto", "cuda", "cuda_full", "rocm", "rocm_full", "cpu", "vulkan"].includes(raw)) return raw;
   return "auto";
 }
 
@@ -351,30 +351,38 @@ async function resolvePinnedNumaNode(gpuIds) {
 }
 
 async function getGpuMemoryUsageMap() {
-  const result = await runCommand("nvidia-smi", [
+  // Try nvidia-smi first.
+  const nvResult = await runCommand("nvidia-smi", [
     "--query-gpu=index,memory.used",
     "--format=csv,noheader,nounits"
   ]);
 
-  if (!result.ok) {
+  if (nvResult.ok) {
+    const map = new Map();
+    for (const line of String(nvResult.stdout || "").split("\n").map((l) => l.trim()).filter(Boolean)) {
+      const [indexRaw, memRaw] = line.split(",").map((x) => String(x || "").trim());
+      const mem = Number(memRaw);
+      if (indexRaw !== "" && Number.isFinite(mem)) map.set(String(indexRaw), mem);
+    }
+    return map;
+  }
+
+  // Fall back to rocm-smi (AMD).
+  const rocmResult = await runCommand("rocm-smi", ["--showmeminfo", "vram", "--json"]);
+  if (!rocmResult.ok) return null;
+
+  try {
+    const parsed = JSON.parse(rocmResult.stdout);
+    const map = new Map();
+    for (const [cardKey, cardData] of Object.entries(parsed)) {
+      const idx = String(cardKey).replace(/^card/i, "");
+      const usedBytes = Number(cardData["VRAM Total Used Memory (B)"] ?? cardData["vram total used memory"] ?? NaN);
+      if (Number.isFinite(usedBytes)) map.set(idx, usedBytes / 1024 / 1024);
+    }
+    return map;
+  } catch {
     return null;
   }
-
-  const map = new Map();
-  const lines = String(result.stdout || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  for (const line of lines) {
-    const [indexRaw, memRaw] = line.split(",").map((x) => String(x || "").trim());
-    const mem = Number(memRaw);
-    if (indexRaw !== "" && Number.isFinite(mem)) {
-      map.set(String(indexRaw), mem);
-    }
-  }
-
-  return map;
 }
 
 function activeAssignedGpuSet(excludeInstanceId = null) {
@@ -721,7 +729,12 @@ function gpuRuntimeDiagnostics(detail) {
       {
         name: "Host NVIDIA driver",
         command: "nvidia-smi",
-        expected: "Lists GPU devices on host"
+        expected: "Lists GPU devices on host (NVIDIA)"
+      },
+      {
+        name: "Host AMD ROCm runtime",
+        command: "rocm-smi",
+        expected: "Lists GPU devices on host (AMD)"
       },
       {
         name: "llama-server binary availability",
@@ -730,18 +743,19 @@ function gpuRuntimeDiagnostics(detail) {
       },
       {
         name: "Bridge service user PATH",
-        command: "which nvidia-smi",
-        expected: "Bridge process user can resolve nvidia-smi"
+        command: "which nvidia-smi || which rocm-smi",
+        expected: "Bridge process user can resolve nvidia-smi or rocm-smi"
       }
     ],
     instructions: [
-      "Install/update NVIDIA GPU driver on the server and verify host nvidia-smi works.",
-      "Ensure nvidia-smi is on PATH for the service account running LM Launch.",
-      "If running under systemd, define Environment=PATH=... including NVIDIA binary location.",
+      "NVIDIA: install/update driver and verify nvidia-smi works.",
+      "AMD: install ROCm and verify rocm-smi works (https://rocm.docs.amd.com/).",
+      "Ensure nvidia-smi or rocm-smi is on PATH for the service account.",
+      "If running under systemd, define Environment=PATH=... including GPU tool location.",
       "Ensure llama-server is installed and on PATH (set LLAMA_SERVER_BIN if needed).",
       "Restart services after changes: bridge, api."
     ],
-    detail: String(detail || "nvidia-smi not found")
+    detail: String(detail || "nvidia-smi and rocm-smi not found")
   };
 }
 
@@ -767,41 +781,64 @@ app.get("/v1/gpus", (_req, res) => {
       "--query-gpu=index,name,memory.total,memory.used,utilization.gpu,temperature.gpu,clocks.current.graphics,clocks.current.memory",
       "--format=csv,noheader,nounits"
     ],
-    (error, stdout) => {
-      if (error) {
-        return res.json({
-          data: [],
-          warning: "nvidia-smi unavailable",
-          diagnostics: gpuRuntimeDiagnostics(error.message)
-        });
+    (nvError, nvStdout) => {
+      if (!nvError) {
+        const data = nvStdout
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const [index, name, total, used, util, temp, graphicsClock, memoryClock] = line.split(",").map((x) => x.trim());
+            const parseMaybeNumber = (value) => { const num = Number(value); return Number.isFinite(num) ? num : null; };
+            return {
+              id: index,
+              name,
+              memory_total_mib: Number(total),
+              memory_used_mib: Number(used),
+              utilization_percent: Number(util),
+              temperature_c: parseMaybeNumber(temp),
+              graphics_clock_mhz: parseMaybeNumber(graphicsClock),
+              memory_clock_mhz: parseMaybeNumber(memoryClock)
+            };
+          });
+        return res.json({ data, diagnostics: { runtimeDetected: true, detail: "nvidia-smi is available to the bridge service" } });
       }
 
-      const data = stdout
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          const [index, name, total, used, util, temp, graphicsClock, memoryClock] = line.split(",").map((x) => x.trim());
-          const parseMaybeNumber = (value) => {
-            const num = Number(value);
-            return Number.isFinite(num) ? num : null;
-          };
-          return {
-            id: index,
-            name,
-            memory_total_mib: Number(total),
-            memory_used_mib: Number(used),
-            utilization_percent: Number(util),
-            temperature_c: parseMaybeNumber(temp),
-            graphics_clock_mhz: parseMaybeNumber(graphicsClock),
-            memory_clock_mhz: parseMaybeNumber(memoryClock)
-          };
-        });
-      return res.json({
-        data,
-        diagnostics: {
-          runtimeDetected: true,
-          detail: "nvidia-smi is available to the bridge service"
+      // NVIDIA unavailable — try AMD ROCm.
+      execFile("rocm-smi", ["--showmeminfo", "vram", "--showuse", "--showtemp", "--showproductname", "--json"], (rocmError, rocmStdout) => {
+        if (rocmError) {
+          return res.json({
+            data: [],
+            warning: "nvidia-smi and rocm-smi unavailable",
+            diagnostics: gpuRuntimeDiagnostics(`nvidia-smi: ${nvError.message}; rocm-smi: ${rocmError.message}`)
+          });
+        }
+
+        try {
+          const parsed = JSON.parse(rocmStdout);
+          const parseMaybeNumber = (value) => { const num = Number(String(value ?? "").replace(/[^0-9.\-]/g, "")); return Number.isFinite(num) ? num : null; };
+          const data = Object.entries(parsed).map(([cardKey, d]) => {
+            const idx = String(cardKey).replace(/^card/i, "");
+            const totalBytes = Number(d["VRAM Total Memory (B)"] ?? d["vram total memory"] ?? 0);
+            const usedBytes  = Number(d["VRAM Total Used Memory (B)"] ?? d["vram total used memory"] ?? 0);
+            return {
+              id: idx,
+              name: String(d["Card series"] ?? d["Card model"] ?? `AMD GPU ${idx}`).trim(),
+              memory_total_mib: Math.round(totalBytes / 1048576),
+              memory_used_mib:  Math.round(usedBytes  / 1048576),
+              utilization_percent: parseMaybeNumber(d["GPU use (%)"] ?? d["GPU Use (%)"]),
+              temperature_c: parseMaybeNumber(d["Temperature (Sensor edge) (C)"] ?? d["Temperature (Sensor junction) (C)"]),
+              graphics_clock_mhz: null,
+              memory_clock_mhz: null
+            };
+          });
+          return res.json({ data, diagnostics: { runtimeDetected: true, detail: "rocm-smi is available to the bridge service" } });
+        } catch (parseErr) {
+          return res.json({
+            data: [],
+            warning: "rocm-smi output could not be parsed",
+            diagnostics: gpuRuntimeDiagnostics(String(parseErr.message || parseErr))
+          });
         }
       });
     }
