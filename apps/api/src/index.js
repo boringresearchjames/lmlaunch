@@ -1122,6 +1122,10 @@ app.get("/help", (_req, res) => {
     <span class="method get">GET</span><code>/health</code>
     <p>Health check. Returns <code>{ status: "ok", service: "api", at: "..." }</code>. No auth required.</p>
   </div>
+  <div class="endpoint">
+    <span class="method get">GET</span><code>/metrics</code> <span class="badge-admin">admin</span>
+    <p>Prometheus scrape endpoint. Emits per-instance metrics (<code>llamafleet_instance_up</code>, <code>llamafleet_instance_healthy</code>, <code>llamafleet_instance_inflight_requests</code>, <code>llamafleet_instance_queue_depth</code>, <code>llamafleet_instance_completed_requests_total</code>, <code>llamafleet_instance_prompt_tokens_total</code>, <code>llamafleet_instance_completion_tokens_total</code>) and per-GPU metrics (<code>llamafleet_gpu_memory_used_mib</code>, <code>llamafleet_gpu_memory_total_mib</code>, <code>llamafleet_gpu_utilization_percent</code>, <code>llamafleet_gpu_temperature_celsius</code>). Labels: <code>instance_id</code>, <code>profile_name</code>, <code>model</code>, <code>gpu_index</code>. Content-Type: <code>text/plain; version=0.0.4</code>.</p>
+  </div>
 
   <h2>Agent Interface</h2>
   <div class="endpoint">
