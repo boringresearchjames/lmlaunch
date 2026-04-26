@@ -6,10 +6,12 @@ LM Launch is a lightweight Node.js control plane and operator dashboard for mult
 
 Each instance runs as an independent `llama-server` process on its own port, with its own context window, queue limit, TTL, and GPU subset. LM Launch tracks state, catches crashes, and auto-restarts instances with configurable backoff.
 
+Every instance is accessible through a single **OpenAI-compatible API** at `http://host:8081/v1/instances/<id>/proxy/v1/...` — same bearer token, same `/v1/chat/completions` and `/v1/completions` endpoints. Point any OpenAI-compatible client at a specific instance proxy URL and it just works, with no extra ports to expose or firewall rules to manage.
+
 **Key capabilities:**
 - Per-instance GPU pinning via `CUDA_VISIBLE_DEVICES` and equivalent env vars for AMD/Intel/Metal
 - Headless runtime process management (start, stop, drain, kill, remove)
-- **Built-in per-instance reverse proxy** — all instances bind to `127.0.0.1`; external clients connect through the API proxy endpoint at `http://host:8081/v1/instances/<id>/proxy/v1/...` so you only expose one port
+- **OpenAI-compatible proxy per instance** — all `llama-server` processes bind to `127.0.0.1`; external clients reach each model through `http://host:8081/v1/instances/<id>/proxy/v1/...`, one port for everything
 - Global API key enforcement — a single bearer token gates both the control-plane API and all proxy traffic; disable for open-access internal setups
 - GPU bleed detection via pre/post memory snapshots
 - Auto-restart with backoff on unclean exits
@@ -21,6 +23,14 @@ LM Launch uses GGUF models via llama.cpp's `llama-server` directly (no LM Studio
 ## Dashboard
 
 ![LM Launch dashboard](docs/lmlaunch-dashboard.png)
+
+## Background
+
+This started as a practical fix. Running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after a few model swaps, the process would eventually crash under sustained load, and there was no way to pin a model to specific cards or isolate instances from each other. There was no existing tool — GUI or headless — that managed independent `llama-server` processes per GPU subset from a single control plane. So this is that tool.
+
+The GPU isolation problem is particularly acute for pre-Ampere hardware. vLLM and SGLang require CUDA 11+ with Ampere-class features for reliable inference; older V100s and GTX 10/20 series cards either hit capability gaps or produce incorrect results. llama.cpp has strong support for this hardware generation, but running multiple instances of it by hand — with correct `CUDA_VISIBLE_DEVICES` per process, log management, readiness polling, and crash recovery — is operationally tedious. LM Launch wraps all of that.
+
+---
 
 ## Why LM Launch Instead of the Alternatives
 
@@ -73,6 +83,10 @@ Things that are currently out of scope or worth being aware of before adopting:
 
 Roughly prioritized:
 
+- [ ] **Model-name routing at the top-level API** — a single `/v1/chat/completions` endpoint at the root that reads the `model` field from the request body and routes to the running instance serving that model. Set `base_url = http://host:8081/v1` once and use model names directly — no per-instance proxy URLs needed by clients.
+- [ ] **Ongoing health monitoring for live instances** — readiness polling currently runs only at startup. A periodic lightweight `GET /health` tick on running instances would detect hangs mid-run and trigger auto-restart without waiting for a process exit.
+- [ ] **Hung request detection and recovery** — if a request to a backend takes longer than a configurable timeout and never resolves, detect the hung process, kill and restart it, and surface an error to the waiting client rather than blocking indefinitely.
+- [ ] **Per-instance llama.cpp binary selection** — allow each instance to specify its own `llama-server` binary path. Enables running different llama.cpp forks or custom builds side by side (e.g. comparing upstream vs. a fork with experimental CUDA kernels, or serving a build compiled specifically for a particular GPU architecture) without system-wide changes.
 - [ ] **Multi-host support** — extend the bridge concept to remote hosts so a single LM Launch API can manage instances across multiple machines. Natural next step for GPU clusters that exceed one box.
 - [ ] **NUMA-aware instance pinning** — on multi-socket systems, allow per-instance CPU and memory affinity (for example `numactl`/cpuset style controls) so each instance can stay local to the CPU node nearest its assigned GPU(s).
 - [ ] **Runtime diagnostics and fallback matrix** — investigate why Vulkan runtime is unavailable on Linux hosts, why alternative CUDA llama.cpp runtime builds cannot currently be selected, and harden proxy/runtime failure handling when specific backends fail model startup or inference.
@@ -84,7 +98,7 @@ Roughly prioritized:
 
 ## Built-in Proxy
 
-Each LM Studio instance launched by LM Launch binds to `127.0.0.1` on its assigned port — it is never directly exposed to the network. Instead, the API serves a built-in OpenAI-compatible reverse proxy for every instance:
+Each `llama-server` instance launched by LM Launch binds to `127.0.0.1` on its assigned port — it is never directly exposed to the network. Instead, the API serves a built-in OpenAI-compatible reverse proxy for every instance:
 
 ```
 http://<host>:8081/v1/instances/<id>/proxy/v1/chat/completions
