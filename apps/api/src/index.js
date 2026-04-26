@@ -733,7 +733,9 @@ function resolveInstanceByModelName(modelName) {
   const matches = running.filter((inst) => {
     if (!inst.effectiveModel) return false;
     const stem = resolveModelName(inst.effectiveModel);
+    const routeName = inst.modelRouteName || stem;
     return (
+      routeName === modelName ||
       inst.effectiveModel === modelName ||
       path.basename(inst.effectiveModel) === modelName ||
       stem === modelName ||
@@ -1613,13 +1615,13 @@ app.get("/v1/instances", async (_req, res) => {
     advertisedHost: resolveAdvertisedHost(inst),
     baseUrl: instancePublicBaseUrl(inst),
     proxyBaseUrl: `${apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`,
-    modelRouteName: resolveModelName(inst.effectiveModel) || inst.effectiveModel || null
+    modelRouteName: inst.modelRouteName || resolveModelName(inst.effectiveModel) || inst.effectiveModel || null
   }));
 
   // Flag instances whose model name is ambiguous (>1 non-stopped instance shares it).
   const modelNameCounts = new Map();
   for (const inst of state.instances.filter((x) => x.state !== "stopped")) {
-    const key = resolveModelName(inst.effectiveModel) || inst.effectiveModel;
+    const key = inst.modelRouteName || resolveModelName(inst.effectiveModel) || inst.effectiveModel;
     if (key) modelNameCounts.set(key, (modelNameCounts.get(key) || 0) + 1);
   }
   for (const inst of data) {
@@ -1714,7 +1716,22 @@ app.post("/v1/instances/start", async (req, res) => {
     modelParallel,
     restartPolicy
   };
-  
+
+  // Compute a unique modelRouteName by appending -2, -3, etc. if the base
+  // name is already taken by a running instance.
+  const baseStem = resolveModelName(modelToUse) || modelToUse;
+  const usedNames = new Set(
+    activeInstances
+      .map((x) => x.modelRouteName || resolveModelName(x.effectiveModel) || x.effectiveModel)
+      .filter(Boolean)
+  );
+  let uniqueModelRouteName = baseStem;
+  if (usedNames.has(baseStem)) {
+    let n = 2;
+    while (usedNames.has(`${baseStem}-${n}`)) n++;
+    uniqueModelRouteName = `${baseStem}-${n}`;
+  }
+
   const existing = state.instances.find((x) => x.id === instanceId);
   if (existing && existing.state !== "stopped") {
     return res.status(409).json({ error: "instance already exists and is not stopped" });
@@ -1725,6 +1742,7 @@ app.post("/v1/instances/start", async (req, res) => {
     profileId: null,
     profileName: name,
     effectiveModel: modelToUse,
+    modelRouteName: uniqueModelRouteName,
     pendingModel: null,
     host: launchHost,
     bindHost,
