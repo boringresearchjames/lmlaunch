@@ -172,34 +172,109 @@ Open **http://localhost:8081** — dashboard and API are both served from this p
 
 ## Quick Start (Manual / Development)
 
-1. Install dependencies (uses `--no-bin-links` to avoid symlink failures on network shares):
+### 1. Prerequisites
+
+**Node.js 18+** — [nodejs.org](https://nodejs.org/en/download)
+
+**A `llama-server` binary** — pick the build that matches your hardware from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases):
+
+| Platform | What to download |
+|---|---|
+| Linux (NVIDIA, CUDA 12) | `llama-*-bin-ubuntu-x64-cuda-cu12*.zip` |
+| Linux (AMD, ROCm) | `llama-*-bin-ubuntu-x64-rocm*.zip` |
+| Linux (CPU) | `llama-*-bin-ubuntu-x64-avx2*.zip` |
+| macOS (Apple Silicon) | `llama-*-bin-macos-arm64.zip` |
+| macOS (Intel) | `llama-*-bin-macos-x64.zip` |
+| Windows (NVIDIA, CUDA 12) | `llama-*-bin-win-cuda-cu12-x64.zip` |
+| Windows (CPU / AVX2) | `llama-*-bin-win-avx2-x64.zip` |
+
+Extract the zip and note the path to `llama-server` (or `llama-server.exe` on Windows).
+
+---
+
+### 2. Install LlamaFleet
 
 ```bash
+git clone https://github.com/boringresearchjames/llamafleet.git
+cd llamafleet
 npm run install:deps
 ```
 
-2. Start all services:
+---
+
+### 3. Configure
+
+LlamaFleet reads configuration from environment variables. Set them in your shell before running `npm start`, or persist them as described below.
+
+**Minimum required variables:**
+
+| Variable | Purpose |
+|---|---|
+| `LLAMA_SERVER_BIN` | Full path to your `llama-server` binary |
+| `API_AUTH_TOKEN` | Bearer token for the dashboard and API (omit to disable auth) |
+| `BRIDGE_AUTH_TOKEN` | Internal API↔bridge token (omit to disable) |
+
+**Linux / macOS** — export in your shell, or add to `~/.bashrc` / `~/.zshrc`:
+
+```bash
+export LLAMA_SERVER_BIN=/usr/local/bin/llama-server
+export API_AUTH_TOKEN=change-me
+export BRIDGE_AUTH_TOKEN=change-me
+```
+
+**macOS** — alternatively, install via Homebrew (puts `llama-server` on your PATH automatically):
+
+```bash
+brew install llama.cpp
+# No LLAMA_SERVER_BIN needed — it's on PATH
+```
+
+**Windows (PowerShell)** — set for the current session:
+
+```powershell
+$env:LLAMA_SERVER_BIN = "C:\Tools\llama\llama-server.exe"
+$env:API_AUTH_TOKEN   = "change-me"
+$env:BRIDGE_AUTH_TOKEN = "change-me"
+```
+
+To persist across sessions, set them as user environment variables:
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("LLAMA_SERVER_BIN", "C:\Tools\llama\llama-server.exe", "User")
+[System.Environment]::SetEnvironmentVariable("API_AUTH_TOKEN",   "change-me", "User")
+[System.Environment]::SetEnvironmentVariable("BRIDGE_AUTH_TOKEN","change-me", "User")
+```
+
+Or open **System Properties → Environment Variables** and add them there.
+
+**MODELS_DIR** — LlamaFleet auto-scans `~/.lmstudio/models`, `~/.ollama/models`, `~/.cache/huggingface/hub`, and `~/unsloth_studio`. To use a different directory:
+
+```bash
+# Linux / macOS
+export MODELS_DIR=/mnt/nas/models
+
+# Windows
+$env:MODELS_DIR = "D:\models"
+```
+
+> See [Environment Variables](#environment-variables) below for the full list.
+
+---
+
+### 4. Run
 
 ```bash
 npm start
 ```
 
-3. Open **http://localhost:8081** — dashboard and API are both served from this port.
+Open **http://localhost:8081** — dashboard and API are both served from this port.
 
-## Development
-
-Run all services with file-watch restarts:
+For file-watch restarts during development:
 
 ```bash
 npm run dev
 ```
 
-Run individual services:
-
-```bash
-npm run start:bridge
-npm run start:api
-```
 
 ## Environment Variables
 
