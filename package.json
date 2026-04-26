@@ -12,6 +12,8 @@
     "start:bridge-router": "npm --prefix apps/bridge-router run start",
     "start:bridge": "npm --prefix apps/host-bridge run start",
     "install:deps": "npm --prefix apps/api install --no-bin-links && npm --prefix apps/host-bridge install --no-bin-links && npm --prefix apps/bridge-router install --no-bin-links",
-    "install:linux": "npm run install:deps && bash scripts/install-ubuntu-systemd.sh"
+    "install:linux": "npm run install:deps && bash scripts/install-ubuntu-systemd.sh",
+    "build:release": "bash scripts/build-release.sh",
+    "install:llama-server": "sudo bash scripts/install-llama-server.sh"
   }
 }

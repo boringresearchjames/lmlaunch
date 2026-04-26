@@ -154,7 +154,23 @@ For GPU visibility in the dashboard:
 - NVIDIA driver installed on host
 - `nvidia-smi` on the host path
 
-## Quick Start (Native)
+## Quick Start (Ubuntu — one line)
+
+```bash
+curl -fsSL https://github.com/boringresearchjames/llamafleet/releases/latest/download/install.sh | sudo bash
+```
+
+This downloads the latest release, installs the systemd service, and auto-detects your GPU (NVIDIA/AMD/Vulkan/CPU) to install a matching `llama-server` binary.
+
+After install, edit `/etc/llamafleet/llamafleet.env` to set your tokens, then:
+
+```bash
+sudo systemctl restart llamafleet
+```
+
+Open **http://localhost:8081** — dashboard and API are both served from this port.
+
+## Quick Start (Manual / Development)
 
 1. Install dependencies (uses `--no-bin-links` to avoid symlink failures on network shares):
 

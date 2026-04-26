@@ -121,6 +121,9 @@ setup_models_dir() {
 
 setup_models_dir
 
+# Install or detect llama-server binary before the service starts.
+bash "$REPO_ROOT/scripts/install-llama-server.sh"
+
 systemctl daemon-reload
 systemctl enable --now llamafleet
 
@@ -167,4 +170,4 @@ printf '  - Set API_AUTH_TOKEN and BRIDGE_AUTH_TOKEN\n'
 printf '  - Set LLAMA_SERVER_BIN to your llama-server binary path\n'
   printf '  - Set LLAMAFLEET_PUBLIC_HOST to this machine'\''s IP if accessing remotely\n'
 printf '  - MODELS_DIR auto-detected from ~/.lmstudio/models (override if needed)\n'
-printf 'Then reload: sudo systemctl restart lmlaunch\n'
+printf 'Then reload: sudo systemctl restart llamafleet\n'
