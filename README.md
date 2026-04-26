@@ -304,16 +304,6 @@ npm run dev
 | `SMOKE_CHECK_ENABLED` | `false` | Run a test inference after startup to verify the instance responds |
 | `STRICT_SMOKE_CHECK` | `false` | Treat a failed smoke check as a fatal startup error |
 
-## GPU Diagnostics
-
-If GPU detection cannot run, `/v1/system/gpus` returns:
-
-- `data: []`
-- `warning`
-- `diagnostics` with checks and remediation steps
-
-This allows non-GPU dev machines to run cleanly while still giving actionable server diagnostics.
-
 ## License
 
 MIT
