@@ -2,162 +2,31 @@
 
 **Run multiple llama.cpp instances in parallel, each pinned to its own GPUs, from one browser dashboard.**
 
-LlamaFleet is a lightweight Node.js control plane and operator dashboard for multi-instance llama.cpp deployments. It lets you partition a multi-GPU machine — assigning specific GPUs to specific models — and manage the full lifecycle of each instance (launch, reload, drain, restart, remove) from a single browser UI without touching a terminal.
+LlamaFleet is a lightweight Node.js control plane and operator dashboard for multi-instance llama.cpp deployments. It partitions a multi-GPU machine — assigning specific GPUs to specific models — and manages the full lifecycle of each instance (launch, reload, drain, restart, remove) from a single browser UI without touching a terminal.
 
-Each instance runs as an independent `llama-server` process on its own port, with its own context window, queue limit, TTL, and GPU subset. LlamaFleet tracks state, catches crashes, and auto-restarts instances with configurable backoff.
+Each instance runs as an independent `llama-server` process with its own context window, queue limit, TTL, and GPU subset. LlamaFleet tracks state, catches crashes, and auto-restarts instances with configurable backoff.
 
-Every instance is accessible through a single **OpenAI-compatible API** at `http://host:8081/v1/instances/<id>/proxy/v1/...` — same bearer token, same `/v1/chat/completions` and `/v1/completions` endpoints. Point any OpenAI-compatible client at a specific instance proxy URL and it just works, with no extra ports to expose or firewall rules to manage.
+Every instance is reachable through a single **OpenAI-compatible API** at `http://host:8081/v1/instances/<id>/proxy/v1/...` — same bearer token, same `/v1/chat/completions` and `/v1/completions` endpoints. A top-level `/v1/chat/completions` endpoint also routes by model name, so you can set `base_url = http://host:8081/v1` once and use model names directly.
 
 **Key capabilities:**
-- Per-instance GPU pinning via `CUDA_VISIBLE_DEVICES` and equivalent env vars for AMD/Intel/Metal
-- Headless runtime process management (start, stop, drain, kill, remove)
-- **OpenAI-compatible proxy per instance** — all `llama-server` processes bind to `127.0.0.1`; external clients reach each model through `http://host:8081/v1/instances/<id>/proxy/v1/...`, one port for everything
-- Global API key enforcement — a single bearer token gates both the control-plane API and all proxy traffic; disable for open-access internal setups
-- GPU bleed detection via pre/post memory snapshots
-- Auto-restart with backoff on unclean exits
+- Per-instance GPU pinning via `CUDA_VISIBLE_DEVICES` and equivalents for AMD/Intel/Metal
+- Headless process management — start, stop, drain, kill, remove from the browser or API
+- OpenAI-compatible reverse proxy per instance — all `llama-server` processes bind to `127.0.0.1`; one port for everything
+- Global bearer token auth for both dashboard and all proxy traffic
 - Config profiles — save a model + GPU + context + TTL combination and relaunch in one click
-- Token-authenticated API and bridge layers for deployment behind a reverse proxy
-- **Per-instance diagnostics** — live log viewer, inference speed test (tokens/sec), and prompt test directly from the dashboard
+- Auto-restart with configurable backoff on unclean exits
+- Periodic health monitoring — instances are polled every 30 s and auto-restarted if unhealthy
+- Prometheus scrape endpoint at `GET /metrics` (per-instance + per-GPU telemetry)
+- Compact VRAM bars in the GPU column with utilisation %, temperature, and power
+- Log viewer with auto-tail and clone-setup action per instance
 
-LlamaFleet uses GGUF models via llama.cpp's `llama-server` directly (no LM Studio required), so it works on NVIDIA (including older pre-Ampere cards), AMD, Apple Silicon, and CPU — no CUDA toolkit required.
+LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio required. Works on NVIDIA (including pre-Ampere V100/10xx/20xx), AMD, Apple Silicon, and CPU.
 
 ## Dashboard
 
 ![LlamaFleet dashboard](docs/llamafleet-dashboard.png)
 
-## Background
-
-This started as a practical fix. Running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after a few model swaps, the process would eventually crash under sustained load, and there was no way to pin a model to specific cards or isolate instances from each other. There was no existing tool — GUI or headless — that managed independent `llama-server` processes per GPU subset from a single control plane. So this is that tool.
-
-The GPU isolation problem is particularly acute for pre-Ampere hardware. vLLM and SGLang require CUDA 11+ with Ampere-class features for reliable inference; older V100s and GTX 10/20 series cards either hit capability gaps or produce incorrect results. llama.cpp has strong support for this hardware generation, but running multiple instances of it by hand — with correct `CUDA_VISIBLE_DEVICES` per process, log management, readiness polling, and crash recovery — is operationally tedious. LlamaFleet wraps all of that.
-
 ---
-
-## Why LlamaFleet Instead of the Alternatives
-
-### vs. LM Studio multi-instance (GUI)
-
-LM Studio's GUI is designed around a single interactive session. You can load multiple models but they share one server port and one GPU assignment strategy — you cannot pin specific GPUs per instance, enforce per-instance queue limits, or automate restarts. LlamaFleet runs fully headless `llama-server` processes, assigns exact GPUs to each instance, and exposes a unified API so an external router can treat the fleet as a pool.
-
-### vs. vLLM
-
-vLLM is excellent for high-throughput serving of a single model on a single node. It does not support running dissimilar models concurrently on different GPU subsets from one control plane, has no built-in multi-instance orchestration UI, and requires Python + CUDA with matching driver versions. vLLM also has limited or no support for older NVIDIA GPUs (pre-Ampere cards like V100, GTX 10/20 series often hit capability gaps or produce incorrect results), and its quantization support is narrower — GGUF and many GGUF-based quant formats (IQ2, IQ3, Q4_K_S, etc.) are not natively supported. LlamaFleet spawns `llama-server` processes directly, so it runs on any hardware llama.cpp supports (NVIDIA including older cards, AMD, Apple Silicon, CPU) without a CUDA toolkit dependency and with the full range of GGUF quantization formats.
-
-### vs. multiple llama.cpp processes
-
-Running `llama-server` manually on different ports works, but you have to manage process lifecycle, log tailing, GPU pinning, and health checks yourself. LlamaFleet wraps all of that: it enforces `CUDA_VISIBLE_DEVICES` and seven other device-visibility env vars per instance, runs pre/post memory snapshots to catch GPU bleed, monitors readiness, and can auto-restart crashed instances with configurable backoff — all from a browser UI.
-
-### vs. SGLang
-
-SGLang (from the LMSYS group) is a high-performance serving framework targeting large-scale production — RadixAttention prefix caching, prefill-decode disaggregation, speculative decoding, tensor/pipeline/expert parallelism. It runs on 400k+ GPUs in production and is arguably the best choice for maximizing throughput on a single very large model. Like vLLM, it requires CUDA, does not support GGUF, and is designed around a single model per deployment rather than a multi-model fleet on consumer or prosumer hardware. If you have a rack of H100s and want to serve one Llama 70B as fast as possible, SGLang is worth evaluating. If you have 4–8 consumer or data center GPUs and want different models running concurrently with minimal operational overhead, LlamaFleet is a better fit.
-
-### vs. GPUStack
-
-[GPUStack](https://github.com/gpustack/gpustack) is the closest conceptual peer — a Python-based GPU cluster manager that orchestrates vLLM and SGLang across multiple hosts. If you already run vLLM or SGLang and want cluster-level scheduling with a web UI, GPUStack is worth looking at. The key differences: GPUStack inherits vLLM/SGLang's hardware and quantization constraints (no GGUF, requires CUDA); it's oriented toward multi-host clusters rather than single-host GPU partitioning; and it's significantly heavier to deploy. LlamaFleet is a single-host tool that spawns `llama-server` processes directly, trades cluster-scale for zero-CUDA simplicity and GGUF support.
-
-### vs. Ollama
-
-Ollama serializes requests to one model at a time per runtime and is optimized for single-user local use. It has no concept of pinning a model to a specific GPU subset, no queue depth control, and no multi-instance fleet view. LlamaFleet is designed specifically for the case where you have multiple GPUs and want different models running concurrently on different GPU subsets with independent ports, context windows, and TTLs.
-
-### When LlamaFleet makes sense
-
-- You have 4–8 GPUs and want each instance isolated to specific cards
-- You want to run different models in parallel (e.g. a coding model and a chat model) without them competing for VRAM
-- You need a lightweight operator dashboard without deploying Kubernetes or Ray Serve
-- You want named config profiles you can load/save to reproduce a multi-instance setup
-- You need auto-restart with backoff for long-running unattended inference workloads
-
----
-
-## Known Limitations and Roadmap Considerations
-
-Things that are currently out of scope or worth being aware of before adopting:
-
-- **Single-host only** — LlamaFleet manages instances on one machine. A bridge-router component exists for multi-host deployments (see `apps/bridge-router`) but multi-host is not the primary target.
-- **Prometheus `/metrics` endpoint** — Available at `GET /metrics` (auth-gated). Exposes per-instance and per-GPU telemetry as a Prometheus scrape target.
-- **`llama-server` binary required** — The host must have a `llama-server` binary on the path (or configured via `LLAMA_SERVER_BIN`). LlamaFleet does not bundle or build it. Get a binary from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases) or build from source with `cmake -DGGML_CUDA=on`.
-- **No model download management** — LlamaFleet does not download or manage model files. Models must be present on the host filesystem and reachable via the path entered in the launch form.
-- **No authentication per-instance** — Individual instances bind to `127.0.0.1` and are accessed exclusively through the LlamaFleet proxy at `/v1/instances/<id>/proxy/v1/...`. Auth is enforced by the global `API_AUTH_TOKEN` bearer token at the proxy layer. There is no per-instance key.
-- **No speculative decoding or prefix caching** — LlamaFleet passes arguments through to `llama-server` verbatim. Advanced inference features like speculative decoding or RadixAttention-style prefix caching are outside the scope of this tool; pass the relevant `llama-server` flags via `runtimeArgs` if the binary supports them.
-
-## Planned / TODO
-
-Roughly prioritized:
-
-- [x] **Model-name routing at the top-level API** — a single `/v1/chat/completions` endpoint at the root that reads the `model` field from the request body and routes to the running instance serving that model. Set `base_url = http://host:8081/v1` once and use model names directly — no per-instance proxy URLs needed by clients.
-- [x] **Ongoing health monitoring for live instances** — a periodic `GET /health` tick runs every 30 s on all non-stopped instances; hung or crashed instances are marked `unhealthy` and auto-restarted according to their restart policy.
-- [ ] **Hung request detection and recovery** — if a request to a backend takes longer than a configurable timeout and never resolves, detect the hung process, kill and restart it, and surface an error to the waiting client rather than blocking indefinitely.
-- [ ] **Per-instance llama.cpp binary selection** — allow each instance to specify its own `llama-server` binary path. Enables running different llama.cpp forks or custom builds side by side (e.g. comparing upstream vs. a fork with experimental CUDA kernels, or serving a build compiled specifically for a particular GPU architecture) without system-wide changes.
-- [ ] **Multi-host support** — extend the bridge concept to remote hosts so a single LlamaFleet API can manage instances across multiple machines. Natural next step for GPU clusters that exceed one box.
-- [ ] **NUMA-aware instance pinning** — on multi-socket systems, allow per-instance CPU and memory affinity (for example `numactl`/cpuset style controls) so each instance can stay local to the CPU node nearest its assigned GPU(s).
-- [ ] **Runtime diagnostics and fallback matrix** — investigate why Vulkan runtime is unavailable on Linux hosts, why alternative CUDA llama.cpp runtime builds cannot currently be selected, and harden proxy/runtime failure handling when specific backends fail model startup or inference.
-- [x] **Prometheus `/metrics` endpoint** — `GET /metrics` (auth-gated) exposes per-instance metrics (`llamafleet_instance_up`, `_healthy`, `_inflight_requests`, `_queue_depth`, `_completed_requests_total`, `_prompt_tokens_total`, `_completion_tokens_total`) and per-GPU metrics (`llamafleet_gpu_memory_used_mib`, `_total_mib`, `_utilization_percent`, `_temperature_celsius`).
-- [ ] **Reverse proxy / load balancer manifest** — emit a ready-made nginx/Caddy/Traefik config or a simple built-in round-robin proxy across healthy instances of the same model, so clients can hit one endpoint and LlamaFleet routes the request.
-- [ ] **Startup timeout and smoke check config** — currently readiness polling is fixed; expose timeout, retry interval, and expected response schema as per-instance options.
-- [ ] **TLS/SSL termination** — add native HTTPS support to the API service so LlamaFleet can terminate TLS directly without requiring a reverse proxy in front. Includes cert/key file config via env vars and optional mTLS for bridge-to-API authentication. Useful for deployments where adding nginx or Caddy is undesirable.
-- [x] **Compact VRAM bars in GPU column** — the GPU column now shows a narrow inline progress bar for each GPU (green/amber/red by fill %) with utilisation %, temperature, and power on the same row. Hover for the full `used/total MiB` figure.
-- [x] **Better first-run / no-models UX** — when no instances are running, the dashboard shows a friendly empty state (🦙 icon, title, and launch instructions) instead of a blank table.
-- [x] **Log viewer auto-refresh** — an "Auto-tail" checkbox in the log panel polls every 2 s and auto-scrolls to the bottom, giving a live tail of `llama-server` stdout/stderr without user action.
-- [x] **Clone/swap model action** — a "Clone Setup" button on each instance row pre-fills the launch form with the same GPU mask, context length, and runtime args, suggests the next free port, and focuses the name field so swapping a model onto the same GPU allocation takes seconds.
-- [ ] **Save as default template** — let users mark a launch configuration as the default so the form pre-fills on reload.
-- [ ] **llama.cpp build tooling** — the current bundled `llama-server` binary (`b760272`) shows a ~5% throughput gap vs. LM Studio's binary on V100 hardware. Investigate and document a reproducible build process for the latest llama.cpp (`cmake -DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES="70;86"`), benchmark against LM Studio, and consider packaging a prebuilt binary or build script in `scripts/` so fresh deployments don't rely on whatever version happens to be installed.
-
-## Built-in Proxy
-
-Each `llama-server` instance launched by LlamaFleet binds to `127.0.0.1` on its assigned port — it is never directly exposed to the network. Instead, the API serves a built-in OpenAI-compatible reverse proxy for every instance:
-
-```
-http://<host>:8081/v1/instances/<id>/proxy/v1/chat/completions
-http://<host>:8081/v1/instances/<id>/proxy/v1/models
-http://<host>:8081/v1/instances/<id>/proxy/v1/...
-```
-
-**This is the only URL you need to give to clients.** The proxy:
-
-- **Enforces global auth** — if `API_AUTH_TOKEN` is set and "Require API Key" is enabled (configurable from the dashboard topbar), every proxied request must carry `Authorization: Bearer <token>`. Toggle it to "Open" for local/trusted-network use without a key.
-- **Passes through transparently** — JSON, binary, multipart file uploads, streaming responses, arbitrary query strings, and all request headers are forwarded verbatim. The proxy does not re-encode or buffer bodies; non-JSON content-types are forwarded as raw streams.
-- **Tracks activity** — the dashboard shows a live token counter and "Active" state chip updated from the `usage` field of completed responses.
-- **Single port** — expose only port `8081` on your firewall/reverse proxy. No per-instance port management required.
-
-The proxy base URL for each instance is shown in the dashboard under the instance row's "Options" menu ("Proxy Base URL" and "Proxy Chat URL" copy buttons).
-
----
-
-## Architecture
-
-LlamaFleet is two core Node.js services (plus an optional bridge router for multi-host setups):
-
-- **API + dashboard** (`apps/api`, port `8081`) — serves the browser dashboard and REST API. Owns all state persistence (`state.json`) and config profiles. Forwards instance lifecycle commands to the bridge. Authenticates inbound requests via `API_AUTH_TOKEN`.
-- **Host bridge** (`apps/host-bridge`, port `8090`) — runs natively on the host and spawns `llama-server` child processes directly, one per instance. Sets `CUDA_VISIBLE_DEVICES` and six other device-visibility env vars per instance to enforce GPU pinning. Reads GPU state via `nvidia-smi` and polls instance readiness. Authenticates requests from the API via `BRIDGE_AUTH_TOKEN`.
-- **Bridge router** (`apps/bridge-router`, optional) — sits between the API and multiple host bridges. Useful when instances are spread across more than one physical machine. Configure via `BRIDGE_POOLS_JSON`.
-
-The bridge must run natively on the host (it spawns processes). The API can run anywhere that can reach the bridge.
-
-### systemd deployment (Ubuntu, no containers)
-
-One systemd unit runs everything. Each instance gets a dedicated `llama-server` child process pinned to its assigned GPUs.
-
-```bash
-sudo bash scripts/install-ubuntu-systemd.sh
-```
-
-- Service unit: `deploy/systemd/llamafleet.service`
-- Env template: `deploy/systemd/env/llamafleet.env.example` → `/etc/llamafleet/llamafleet.env`
-- Full runbook: `deploy/systemd/README.md`
-
-## Dependencies
-
-Required:
-
-- Node.js 18+
-- `llama-server` binary on the host path, or path set via `LLAMA_SERVER_BIN`
-  - Get a pre-built binary from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases)
-  - Or build from source: `cmake -B build -DGGML_CUDA=on && cmake --build build --target llama-server -j$(nproc)`
-
-For GPU visibility in the dashboard:
-
-- NVIDIA driver installed on host
-- `nvidia-smi` on the host path
 
 ## Quick Start (Ubuntu — one line)
 
@@ -165,25 +34,30 @@ For GPU visibility in the dashboard:
 curl -fsSL https://github.com/boringresearchjames/llamafleet/releases/latest/download/install.sh | sudo bash
 ```
 
-This downloads the latest release, installs the systemd service, and auto-detects your GPU (NVIDIA/AMD/Vulkan/CPU) to install a matching `llama-server` binary.
-
-After install, edit `/etc/llamafleet/llamafleet.env` to set your tokens, then:
+Auto-detects your GPU (NVIDIA/AMD/Vulkan/CPU), installs a matching `llama-server` binary, and sets up the systemd service. After install:
 
 ```bash
+# Edit your tokens
+sudo nano /etc/llamafleet/llamafleet.env
+
 sudo systemctl restart llamafleet
 ```
 
-Open **http://localhost:8081** — dashboard and API are both served from this port.
+Open **http://localhost:8081**.
+
+---
 
 ## Quick Start (Manual / Development)
 
 ### 1. Prerequisites
 
-**Node.js 18+** — [nodejs.org](https://nodejs.org/en/download)
+- **Node.js 18+**
+- **A `llama-server` binary** — download a pre-built binary from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases) or build from source:
+  ```bash
+  cmake -B build -DGGML_CUDA=on && cmake --build build --target llama-server -j$(nproc)
+  ```
 
-**A `llama-server` binary** — pick the build that matches your hardware from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases):
-
-| Platform | What to download |
+| Platform | Binary to download |
 |---|---|
 | Linux (NVIDIA, CUDA 12) | `llama-*-bin-ubuntu-x64-cuda-cu12*.zip` |
 | Linux (AMD, ROCm) | `llama-*-bin-ubuntu-x64-rocm*.zip` |
@@ -191,11 +65,7 @@ Open **http://localhost:8081** — dashboard and API are both served from this p
 | Windows (NVIDIA, CUDA 12) | `llama-*-bin-win-cuda-cu12-x64.zip` |
 | Windows (CPU / AVX2) | `llama-*-bin-win-avx2-x64.zip` |
 
-Extract the zip and note the path to `llama-server` (or `llama-server.exe` on Windows).
-
----
-
-### 2. Install LlamaFleet
+### 2. Install
 
 ```bash
 git clone https://github.com/boringresearchjames/llamafleet.git
@@ -203,11 +73,7 @@ cd llamafleet
 npm run install:deps
 ```
 
----
-
 ### 3. Configure
-
-LlamaFleet reads configuration from environment variables. Set them in your shell before running `npm start`, or persist them as described below.
 
 **Minimum required variables:**
 
@@ -215,49 +81,27 @@ LlamaFleet reads configuration from environment variables. Set them in your shel
 |---|---|
 | `LLAMA_SERVER_BIN` | Full path to your `llama-server` binary |
 | `API_AUTH_TOKEN` | Bearer token for the dashboard and API (omit to disable auth) |
-| `BRIDGE_AUTH_TOKEN` | Internal API↔bridge token (omit to disable) |
-
-**Linux** — export in your shell, or add to `~/.bashrc` / `~/.profile`:
+| `BRIDGE_AUTH_TOKEN` | Internal API<->bridge token (omit to disable) |
 
 ```bash
+# Linux
 export LLAMA_SERVER_BIN=/usr/local/bin/llama-server
 export API_AUTH_TOKEN=change-me
 export BRIDGE_AUTH_TOKEN=change-me
 ```
 
-**Windows (PowerShell)** — set for the current session:
-
 ```powershell
+# Windows (PowerShell)
 $env:LLAMA_SERVER_BIN = "C:\Tools\llama\llama-server.exe"
 $env:API_AUTH_TOKEN   = "change-me"
 $env:BRIDGE_AUTH_TOKEN = "change-me"
 ```
 
-To persist across sessions, set them as user environment variables:
-
-```powershell
-[System.Environment]::SetEnvironmentVariable("LLAMA_SERVER_BIN", "C:\Tools\llama\llama-server.exe", "User")
-[System.Environment]::SetEnvironmentVariable("API_AUTH_TOKEN",   "change-me", "User")
-[System.Environment]::SetEnvironmentVariable("BRIDGE_AUTH_TOKEN","change-me", "User")
-```
-
-Or open **System Properties → Environment Variables** and add them there.
-
-**MODELS_DIR** — LlamaFleet auto-scans `~/.lmstudio/models`, `~/.ollama/models`, `~/.cache/huggingface/hub`, and `~/unsloth_studio`. To use a different directory:
+**MODELS_DIR** — LlamaFleet auto-scans `~/.lmstudio/models`, `~/.ollama/models`, `~/.cache/huggingface/hub`, and `~/unsloth_studio`. Override with:
 
 ```bash
-# Linux
 export MODELS_DIR=/mnt/nas/models
 ```
-
-```powershell
-# Windows
-$env:MODELS_DIR = "D:\models"
-```
-
-> See [Environment Variables](#environment-variables) below for the full list.
-
----
 
 ### 4. Run
 
@@ -265,14 +109,45 @@ $env:MODELS_DIR = "D:\models"
 npm start
 ```
 
-Open **http://localhost:8081** — dashboard and API are both served from this port.
+Open **http://localhost:8081**.
 
-For file-watch restarts during development:
+For watch-mode restarts during development:
 
 ```bash
 npm run dev
 ```
 
+---
+
+## API Reference
+
+The full REST API reference is in [`docs/api.md`](docs/api.md).
+
+It is also served live at **`http://localhost:8081/help`** with syntax-highlighted endpoint listings, request/response schemas, and Prometheus metric names.
+
+All endpoints require `Authorization: Bearer <token>` when auth is enabled. Endpoints marked **[admin]** require the server `API_AUTH_TOKEN` specifically.
+
+---
+
+## Architecture
+
+LlamaFleet is two core Node.js services plus an optional bridge router:
+
+- **API + dashboard** (`apps/api`, port `8081`) — serves the browser dashboard and REST API. Owns all state persistence (`state.json`) and config profiles. Authenticates inbound requests via `API_AUTH_TOKEN`.
+- **Host bridge** (`apps/host-bridge`, port `8090`) — runs natively on the host and spawns `llama-server` child processes, one per instance. Enforces `CUDA_VISIBLE_DEVICES` and six other device-visibility env vars for GPU pinning. Polls instance readiness and captures GPU telemetry via `nvidia-smi`.
+- **Bridge router** (`apps/bridge-router`, optional) — sits between the API and multiple host bridges for multi-host deployments. Configure via `BRIDGE_POOLS_JSON`.
+
+### Systemd deployment (Ubuntu)
+
+```bash
+sudo bash scripts/install-ubuntu-systemd.sh
+```
+
+- Service unit: `deploy/systemd/llamafleet.service`
+- Env template: `deploy/systemd/env/llamafleet.env.example` -> `/etc/llamafleet/llamafleet.env`
+- Full runbook: `deploy/systemd/README.md`
+
+---
 
 ## Environment Variables
 
@@ -280,8 +155,8 @@ npm run dev
 
 | Variable | Default | Description |
 |---|---|---|
-| `API_AUTH_TOKEN` | *(unset)* | Bearer token for dashboard + API. When unset, auth is disabled. |
-| `BRIDGE_AUTH_TOKEN` | *(unset)* | Internal API↔bridge token. When unset, bridge auth is disabled. |
+| `API_AUTH_TOKEN` | *(unset)* | Bearer token for dashboard + API. Unset = auth disabled. |
+| `BRIDGE_AUTH_TOKEN` | *(unset)* | Internal API<->bridge token. Unset = bridge auth disabled. |
 
 ### API (`apps/api`)
 
@@ -291,7 +166,7 @@ npm run dev
 | `BRIDGE_URL` | `http://127.0.0.1:8090` | URL of the host bridge |
 | `STATE_FILE` | `./data/state.json` | Persistent state path |
 | `SHARED_CONFIG_FILE` | `./data/shared-config.yaml` | Shared config (profiles, security) |
-| `MODELS_DIR` | `~/.lmstudio/models` | Primary directory scanned for `.gguf` files. Additional locations are auto-scanned automatically: `~/.ollama/models`, `~/.cache/huggingface/hub`, `~/unsloth_studio` |
+| `MODELS_DIR` | `~/.lmstudio/models` | Primary directory scanned for `.gguf` files. Also auto-scans `~/.ollama/models`, `~/.cache/huggingface/hub`, `~/unsloth_studio` |
 | `LLAMAFLEET_PUBLIC_HOST` | *(unset)* | This machine's IP, used in proxy URLs shown in the dashboard |
 | `CORS_ORIGIN` | `*` | Value of `Access-Control-Allow-Origin` |
 
@@ -308,6 +183,24 @@ npm run dev
 | `GPU_BLEED_MAX_DELTA_MIB` | `256` | Max allowed post-stop VRAM increase before flagging bleed |
 | `SMOKE_CHECK_ENABLED` | `false` | Run a test inference after startup to verify the instance responds |
 | `STRICT_SMOKE_CHECK` | `false` | Treat a failed smoke check as a fatal startup error |
+
+---
+
+## Background
+
+This started as a practical fix for running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after model swaps, processes crashed under sustained load, and there was no way to pin a model to specific cards or isolate instances. No existing tool — GUI or headless — managed independent `llama-server` processes per GPU subset from a single control plane. LlamaFleet is that tool.
+
+The GPU isolation problem is particularly relevant for pre-Ampere hardware. vLLM and SGLang require CUDA 11+ with Ampere-class features; older V100s and GTX 10/20 series cards either hit capability gaps or produce incorrect results. llama.cpp supports this hardware generation well, but running multiple instances with correct `CUDA_VISIBLE_DEVICES` per process, log management, readiness polling, and crash recovery is operationally tedious. LlamaFleet wraps all of that.
+
+---
+
+## Known Limitations
+
+- **Single-host only** — LlamaFleet manages instances on one machine. A bridge-router component exists for multi-host setups but multi-host is not the primary target.
+- **`llama-server` binary required** — LlamaFleet does not bundle or build it. Get a binary from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases).
+- **No model download management** — Models must be present on the host filesystem.
+- **No per-instance auth** — Auth is enforced at the proxy layer via the global `API_AUTH_TOKEN`. There is no per-instance key.
+- **No speculative decoding or prefix caching** — Pass the relevant `llama-server` flags via `runtimeArgs` if the binary supports them.
 
 ## License
 

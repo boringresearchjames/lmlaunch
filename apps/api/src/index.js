@@ -921,261 +921,128 @@ app.get("/metrics", auth, (_req, res) => {
   res.send(lines.join("\n") + "\n");
 });
 
+// Minimal markdown → HTML renderer for /help. Only handles patterns used in docs/api.md.
+function renderApiDocs(md) {
+  const blocks = [];
+  const save = (html) => { blocks.push(html); return `\x00B${blocks.length - 1}\x00`; };
+
+  // Fenced code blocks
+  md = md.replace(/```(?:\w+)?\n([\s\S]*?)```/gm, (_, c) =>
+    save(`<pre>${c.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>`));
+  // Inline code
+  md = md.replace(/`([^`\n]+)`/g, (_, c) =>
+    save(`<code>${c.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</code>`));
+
+  // Escape remaining HTML
+  md = md.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  // Tables (simple: | col | col |)
+  md = md.replace(/((?:^\|.+\|\n)+)/gm, (table) => {
+    const rows = table.trim().split("\n").filter(r => !/^\|[-| ]+\|$/.test(r));
+    const toRow = (r, tag) => `<tr>${r.replace(/^\||\|$/g,"").split("|")
+      .map(c => `<${tag}>${c.trim()}</${tag}>`).join("")}</tr>`;
+    return save(`<table>${rows.map((r,i) => toRow(r, i===0?"th":"td")).join("")}</table>`);
+  });
+
+  const METHOD_COLORS = { GET:"#4cdb8e", POST:"#5ca5ff", PUT:"#ffbe5c", DELETE:"#ff5c7a", PATCH:"#c084fc", DEL:"#ff5c7a" };
+  const methodBadge = (m) => {
+    const c = METHOD_COLORS[m] || "#9fb0d8";
+    return save(`<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:700;font-family:monospace;background:${c}22;color:${c};margin-right:6px">${m}</span>`);
+  };
+
+  // Headings — detect METHOD /path pattern in h3/h4
+  md = md.replace(/^### (GET|POST|PUT|DELETE|PATCH|DEL) (.+)$/gm,
+    (_, m, rest) => `<h3>${methodBadge(m)}<code>${rest.replace(/\s\*\*\[admin\]\*\*/,"")}</code>${rest.includes("**[admin]**") ? save(`<span style="font-size:10px;background:rgba(255,190,92,.15);color:#ffbe5c;border:1px solid rgba(255,190,92,.3);border-radius:3px;padding:1px 5px;margin-left:6px">admin</span>`) : ""}</h3>`);
+  md = md.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+  md = md.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+  md = md.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+
+  // Inline formatting
+  md = md.replace(/\*\*\[admin\]\*\*/g, save(`<span style="font-size:10px;background:rgba(255,190,92,.15);color:#ffbe5c;border:1px solid rgba(255,190,92,.3);border-radius:3px;padding:1px 5px;margin-left:6px">admin</span>`));
+  md = md.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  md = md.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  md = md.replace(/\[([^\]]+)\]\(([^)]+)\)/g, `<a href="$2">$1</a>`);
+
+  // HR
+  md = md.replace(/^---$/gm, "<hr>");
+
+  // Lists
+  md = md.replace(/^- (.+)$/gm, "<li>$1</li>");
+  md = md.replace(/(<li>[\s\S]*?<\/li>)(\n(?!<li>))/g, "$1</ul>\n");
+  md = md.replace(/(<li>)/, "<ul>$1");
+
+  // Paragraphs
+  md = md.split(/\n\n+/).map(chunk => {
+    chunk = chunk.trim();
+    if (!chunk) return "";
+    if (/^<(h[1-4]|hr|ul|pre|table)/.test(chunk)) return chunk;
+    return `<p>${chunk.replace(/\n/g, " ")}</p>`;
+  }).join("\n");
+
+  // Restore blocks
+  return md.replace(/\x00B(\d+)\x00/g, (_, i) => blocks[+i]);
+}
+
 app.get("/help", (_req, res) => {
+  const docsPath = path.resolve(__dirname, "../../../docs/api.md");
+  let md;
+  try { md = fs.readFileSync(docsPath, "utf8"); }
+  catch { return res.status(500).send("API reference not found. Expected at docs/api.md"); }
+
+  // Strip leading h1 + first paragraph (rendered in the HTML header instead)
+  md = md.replace(/^#[^\n]*\n+[^\n#]+\n+---\n+/, "");
+
+  const body = renderApiDocs(md);
   res.setHeader("content-type", "text/html; charset=utf-8");
   res.send(`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LM Launch — API Reference</title>
+  <title>LlamaFleet — API Reference</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦙</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
-    body { font-family: "Segoe UI", system-ui, sans-serif; background: #06070b; color: #e7eeff; margin: 0; padding: 32px; line-height: 1.6; }
-    h1 { font-size: 28px; margin: 0 0 4px; }
-    h2 { font-size: 16px; margin: 28px 0 8px; color: #7df8dd; border-bottom: 1px solid rgba(125,248,221,0.2); padding-bottom: 4px; }
-    h3 { font-size: 13px; margin: 16px 0 4px; color: #9fb0d8; }
-    p, li { font-size: 13px; color: #c4d2f4; margin: 4px 0; }
-    code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; background: rgba(92,165,255,0.12); padding: 1px 5px; border-radius: 4px; color: #9dd8ff; }
-    pre { background: rgba(5,8,19,0.8); border: 1px solid rgba(159,176,216,0.2); border-radius: 8px; padding: 12px; font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; color: #c4d2f4; overflow-x: auto; }
-    .muted { color: #9fb0d8; }
-    .endpoint { margin-bottom: 18px; }
-    .method { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; font-family: monospace; }
-    .get  { background: rgba(76,219,142,0.2); color: #4cdb8e; }
-    .post { background: rgba(92,165,255,0.2); color: #5ca5ff; }
-    .put  { background: rgba(255,190,92,0.2); color: #ffbe5c; }
-    .del  { background: rgba(255,92,122,0.2); color: #ff5c7a; }
-    a { color: #5ca5ff; }
-    .section { max-width: 860px; margin: 0 auto; }
-    .subtitle { color: #9fb0d8; font-size: 14px; margin: 0 0 24px; }
-    .badge-admin { font-size: 10px; background: rgba(255,190,92,0.15); color: #ffbe5c; border: 1px solid rgba(255,190,92,0.3); border-radius: 3px; padding: 1px 5px; margin-left: 6px; vertical-align: middle; }
+    :root { --bg-0:#06070b; --bg-1:#0b1020; --bg-2:#111936; --border:rgba(154,181,255,0.22); --ink:#e7eeff; --muted:#9fb0d8; --accent:#5ca5ff; --accent-2:#7df8dd; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body { color: var(--ink); font-family: "Manrope", "Segoe UI", sans-serif; background: linear-gradient(165deg, var(--bg-0) 0%, var(--bg-1) 45%, var(--bg-2) 100%); line-height: 1.6; }
+    .bg-grid { pointer-events:none; position:fixed; inset:0; background-image:linear-gradient(rgba(130,162,255,0.055) 1px,transparent 1px),linear-gradient(90deg,rgba(130,162,255,0.055) 1px,transparent 1px); background-size:30px 30px; mask-image:radial-gradient(circle at center,black 35%,transparent 100%); z-index:0; }
+    .bg-orb { pointer-events:none; position:fixed; border-radius:999px; filter:blur(10px); opacity:0.5; z-index:0; }
+    .orb-a { width:460px; height:460px; left:-120px; top:-130px; background:radial-gradient(circle at center,rgba(92,165,255,0.5),rgba(92,165,255,0)); }
+    .orb-b { width:420px; height:420px; right:-120px; bottom:-150px; background:radial-gradient(circle at center,rgba(125,248,221,0.4),rgba(125,248,221,0)); }
+    .topbar { position:relative; z-index:1; max-width:900px; margin:0 auto; padding:32px 28px 20px; border-bottom:1px solid rgba(154,181,255,0.12); }
+    .badge { display:inline-block; font-size:10px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); background:rgba(92,165,255,0.1); border:1px solid rgba(92,165,255,0.25); border-radius:6px; padding:2px 8px; margin-bottom:6px; }
+    .topbar h1 { font-size:28px; font-weight:800; margin:0 0 4px; line-height:1.1; }
+    .topbar p { font-size:13px; color:var(--muted); margin:0; }
+    .content { position:relative; z-index:1; max-width:900px; margin:0 auto; padding:28px 28px 60px; }
+    h2 { font-size:14px; font-weight:700; margin:32px 0 8px; color:var(--accent-2); border-bottom:1px solid rgba(125,248,221,0.18); padding-bottom:4px; letter-spacing:0.04em; text-transform:uppercase; }
+    h3 { font-size:13px; font-weight:600; margin:20px 0 4px; color:var(--muted); }
+    p, li { font-size:13px; color:#c4d2f4; margin:4px 0; }
+    ul { padding-left:20px; }
+    code { font-family:"JetBrains Mono",Consolas,monospace; font-size:12px; background:rgba(92,165,255,0.12); padding:1px 5px; border-radius:4px; color:#9dd8ff; }
+    pre { background:rgba(5,8,19,0.8); border:1px solid rgba(159,176,216,0.2); border-radius:8px; padding:12px; font-family:"JetBrains Mono",Consolas,monospace; font-size:12px; color:#c4d2f4; overflow-x:auto; white-space:pre-wrap; margin:8px 0; }
+    a { color:var(--accent); }
+    hr { border:none; border-top:1px solid rgba(159,176,216,0.12); margin:24px 0; }
+    strong { color:var(--ink); }
+    table { border-collapse:collapse; width:100%; margin:8px 0; font-size:12px; }
+    th, td { text-align:left; padding:5px 10px; border:1px solid rgba(159,176,216,0.15); color:#c4d2f4; }
+    th { background:rgba(92,165,255,0.08); color:var(--muted); }
   </style>
 </head>
 <body>
-<div class="section">
-  <h1>LM Launch</h1>
-  <p class="subtitle">API reference. All endpoints require <code>Authorization: Bearer &lt;token&gt;</code> when auth is enabled. Endpoints marked <span class="badge-admin">admin</span> require the server API token.</p>
-
-  <h2>Auth</h2>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/auth/login</code>
-    <p>Exchange username + password for a session token (only when user auth is enabled).</p>
-    <pre>{ "username": "alice", "password": "..." }
-→ { "token": "...", "tokenType": "Bearer", "expiresAt": "...", "username": "alice" }</pre>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/auth/logout</code>
-    <p>Invalidate the current Bearer session token.</p>
-  </div>
-
-  <h2>Instances</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instances</code>
-    <p>List all instances with state, runtime info, and live GPU telemetry. Returns <code>{ data: [...], gpus: [...] }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instances/start</code>
-    <p>Launch a new instance. <code>name</code>, <code>model</code>, and <code>port</code> are required. <code>gpus</code> is required for non-CPU backends.</p>
-    <pre>{
-  "name": "my-instance",          // required — display name
-  "model": "/path/to/model.gguf", // required
-  "port": 1234,                   // required
-  "gpus": ["0", "1"],             // required for cuda/metal backends
-  "runtimeBackend": "cuda_full",  // "auto" | "cuda_full" | "cpu"  (default "auto")
-  "runtimeArgs": ["--flash-attn", "on", "-c", "8192"],
-  "contextLength": 8192,          // integer or "auto"
-  "instanceId": "my-id",          // optional — auto-generated UUID if omitted
-  "host": "127.0.0.1",            // optional listen host  (default 127.0.0.1)
-  "maxInflightRequests": 4,       // optional  (default 4, max 1024)
-  "queueLimit": 64,               // optional  (default 64)
-  "modelTtlSeconds": 300,         // optional — evict idle model after N seconds
-  "modelParallel": 2,             // optional — parallel model slots
-  "restartPolicy": { "mode": "on-failure", "maxRetries": 2, "backoffMs": 3000 }
-}</pre>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instances/:id/stop</code>
-    <p>Gracefully stop an instance.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instances/:id/kill</code>
-    <p>Force-kill an instance immediately. Body: <code>{ "reason": "optional string" }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method del">DEL</span><code>/v1/instances/:id</code>
-    <p>Stop (if running) and remove an instance from state.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instances/:id/drain</code>
-    <p>Pause or resume request intake. Body: <code>{ "enabled": true }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instances/:id/model</code>
-    <p>Hot-swap the model on a running instance.</p>
-    <pre>{
-  "model": "/path/to/new-model.gguf",  // required
-  "applyMode": "next_restart"          // "next_restart" (default) | "restart_now"
-}</pre>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instances/:id/logs</code>
-    <p>Tail instance logs. Query: <code>?lines=200</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instances/:id/connection</code>
-    <p>Returns copy-ready direct and proxied URLs plus current model fields for an instance.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instances/:id/proxy/v1/...</code>
-    <p>OpenAI-compatible reverse proxy to the instance. Errors are returned as <code>{ error: { message, type, param, code } }</code>.</p>
-    <pre>curl http://localhost:8081/v1/instances/my-instance/proxy/v1/chat/completions \\
-  -H "Authorization: Bearer &lt;token&gt;" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"...", "messages":[{"role":"user","content":"Hello"}]}'</pre>
-  </div>
-
-  <h2>Model-Name Routing</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/models</code>
-    <p>List all running (non-draining) instances as OpenAI-compatible model objects. Each <code>id</code> is the model filename stem (e.g. <code>Qwen2.5-7B-Q4_K_M</code>). Extra fields: <code>instance_id</code>, <code>profile_name</code>, <code>effective_model</code>.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/chat/completions</code>
-    <p>OpenAI-compatible chat completions routed by model name. The <code>model</code> field is matched against each running instance's model filename stem, full basename, full path, or profile name — in that order. Returns <code>404</code> if no match, <code>409</code> if ambiguous (multiple instances serve the same name).</p>
-    <pre>curl http://localhost:8081/v1/chat/completions \\
-  -H "Authorization: Bearer &lt;token&gt;" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"Qwen2.5-7B-Q4_K_M", "messages":[{"role":"user","content":"Hello"}]}'</pre>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/completions</code>
-    <p>OpenAI-compatible text completions routed by model name. Same routing rules as <code>/v1/chat/completions</code>.</p>
-  </div>
-
-  <h2>Manifest</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/manifest/ready</code>
-    <p>Returns all <em>ready</em> (non-draining) instances with routing policy and capacity fields. Designed for load-balancer or agent use.</p>
-  </div>
-
-  <h2>Profiles</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/profiles</code>
-    <p>List saved launch profiles. Returns <code>{ data: [...] }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/profiles</code>
-    <p>Create a launch profile. Body mirrors the instance start schema; <code>name</code> is required.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method del">DEL</span><code>/v1/profiles/:id</code>
-    <p>Delete a saved profile.</p>
-  </div>
-
-  <h2>Config Library</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instance-configs</code>
-    <p>List all saved configs. Returns <code>{ data: [...] }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instance-configs/:id</code>
-    <p>Get a single saved config by ID.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instance-configs/save-current</code>
-    <p>Save current running instances as a named config. Body: <code>{ "name": "My Config", "id": "optional-id" }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instance-configs/:id/load</code>
-    <p>Launch all instances from a saved config.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instance-configs/current/export.yaml</code>
-    <p>Export the current running instances as YAML (not saved to library).</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/instance-configs/:id/export.yaml</code>
-    <p>Download a saved config as YAML.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/instance-configs/import.yaml</code>
-    <p>Import a config from YAML. Body: YAML text, <code>Content-Type: application/yaml</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method del">DEL</span><code>/v1/instance-configs/:id</code>
-    <p>Delete a saved config.</p>
-  </div>
-
-  <h2>System</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/gpus</code>
-    <p>List detected GPUs with VRAM usage via bridge.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/local-models</code>
-    <p>List GGUF model files on the host. Returns <code>{ data: [{ id, name, shards }], dir }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/audit</code>
-    <p>Retrieve the audit log. Returns <code>{ data: [...] }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/health</code>
-    <p>Health check. Returns <code>{ status: "ok", service: "api", at: "..." }</code>. No auth required.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/metrics</code> <span class="badge-admin">admin</span>
-    <p>Prometheus scrape endpoint. Emits per-instance metrics (<code>llamafleet_instance_up</code>, <code>llamafleet_instance_healthy</code>, <code>llamafleet_instance_inflight_requests</code>, <code>llamafleet_instance_queue_depth</code>, <code>llamafleet_instance_completed_requests_total</code>, <code>llamafleet_instance_prompt_tokens_total</code>, <code>llamafleet_instance_completion_tokens_total</code>) and per-GPU metrics (<code>llamafleet_gpu_memory_used_mib</code>, <code>llamafleet_gpu_memory_total_mib</code>, <code>llamafleet_gpu_utilization_percent</code>, <code>llamafleet_gpu_temperature_celsius</code>). Labels: <code>instance_id</code>, <code>profile_name</code>, <code>model</code>, <code>gpu_index</code>. Content-Type: <code>text/plain; version=0.0.4</code>.</p>
-  </div>
-
-  <h2>Agent Interface</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/agent/capabilities</code>
-    <p>Describe available agent actions and their input/output schemas.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/agent/action</code>
-    <p>Execute a named agent action. Body: <code>{ "action": "instances.start", "input": { ... } }</code></p>
-    <p>Actions: <code>manifest.ready</code>, <code>profiles.list</code>, <code>instances.list</code>, <code>instances.start</code>, <code>instances.stop</code>, <code>instances.kill</code>, <code>instances.drain</code>, <code>instances.switchModel</code>, <code>instances.logs</code>, <code>instances.connection</code></p>
-  </div>
-
-  <h2>Admin</h2>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/settings/security</code> <span class="badge-admin">admin</span>
-    <p>Get current security settings (auth, TLS, API key policy).</p>
-  </div>
-  <div class="endpoint">
-    <span class="method put">PUT</span><code>/v1/settings/security</code> <span class="badge-admin">admin</span>
-    <p>Update security settings.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/users</code> <span class="badge-admin">admin</span>
-    <p>List local users.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/users</code> <span class="badge-admin">admin</span>
-    <p>Create a local user. Body: <code>{ "username": "alice", "password": "..." }</code></p>
-  </div>
-  <div class="endpoint">
-    <span class="method del">DEL</span><code>/v1/users/:username</code> <span class="badge-admin">admin</span>
-    <p>Delete a local user.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/config/export.yaml</code> <span class="badge-admin">admin</span> &nbsp;
-    <span class="method post">POST</span><code>/v1/config/import.yaml</code> <span class="badge-admin">admin</span>
-    <p>Export or import the full server config (security settings, profiles) as YAML. Import supports <code>?dryRun=true</code>.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/config/status</code> <span class="badge-admin">admin</span>
-    <p>Config sync status — current hash and last import timestamps.</p>
-  </div>
-  <div class="endpoint">
-    <span class="method get">GET</span><code>/v1/system/gpus</code> <span class="badge-admin">admin</span>
-    <p>GPU list via bridge (admin-gated variant of <code>/v1/gpus</code>).</p>
-  </div>
-  <div class="endpoint">
-    <span class="method post">POST</span><code>/v1/system/close</code> <span class="badge-admin">admin</span>
-    <p>Graceful shutdown. Body: <code>{ "unloadModels": true, "stopDaemon": true }</code></p>
-  </div>
+<div class="bg-orb orb-a"></div>
+<div class="bg-orb orb-b"></div>
+<div class="bg-grid"></div>
+<header class="topbar">
+  <div class="badge">API Reference</div>
+  <h1>Llama<span style="color:var(--accent)">Fleet</span></h1>
+  <p>All endpoints require <code>Authorization: Bearer &lt;token&gt;</code> when auth is enabled. Endpoints marked <span style="font-size:10px;background:rgba(255,190,92,.15);color:#ffbe5c;border:1px solid rgba(255,190,92,.3);border-radius:3px;padding:1px 5px">admin</span> require the server API token.</p>
+</header>
+<div class="content">
+${body}
 </div>
 </body>
 </html>`);
