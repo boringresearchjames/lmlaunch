@@ -194,6 +194,37 @@ The GPU isolation problem is particularly relevant for pre-Ampere hardware. vLLM
 
 ---
 
+## Network Security
+
+LlamaFleet is designed for **homelab and internal network deployments**. It is not hardened for direct public internet exposure. Follow these recommendations before deploying:
+
+**Always do:**
+- Set `API_AUTH_TOKEN` and `BRIDGE_AUTH_TOKEN` to long random strings (32+ hex chars). Without these, the API and dashboard are open to anyone on the network.
+- Bind port `8081` to your internal network interface only, not `0.0.0.0`, unless you intend it to be reachable network-wide.
+- Keep port `8090` (the host bridge) firewalled — it should only be reachable from the API process on `127.0.0.1`. It has no auth by default.
+
+**If you expose port `8081` beyond your LAN:**
+- Put a reverse proxy (nginx, Caddy, Traefik) in front and terminate TLS there. LlamaFleet serves plain HTTP.
+- Restrict the path via the proxy if you only want API access (not the dashboard).
+- Consider IP allowlisting at the firewall or proxy level.
+
+**Token generation:**
+```bash
+# Linux / macOS
+openssl rand -hex 32
+
+# PowerShell
+-join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Max 256) })
+```
+
+**What LlamaFleet does not provide:**
+- TLS — use a reverse proxy
+- Per-user or per-instance auth — one global token for everything
+- Rate limiting — your reverse proxy or firewall should handle this
+- Audit logging for individual API calls — only instance lifecycle events are logged
+
+---
+
 ## Known Limitations
 
 - **Single-host only** — LlamaFleet manages instances on one machine. A bridge-router component exists for multi-host setups but multi-host is not the primary target.
