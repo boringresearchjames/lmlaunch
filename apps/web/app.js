@@ -1172,7 +1172,7 @@ async function refreshInstances() {
             ${testBtn}
             ${speedTestBtn}
             ${drainBtn}
-            <button class="icon-btn icon-copy" data-action="copy-model" data-id="${inst.id}" data-copy="${inst.effectiveModel}" title="Copy Model ID">&#x1F4CB;</button>
+            <button class="icon-btn icon-copy" data-action="copy-model" data-id="${inst.id}" data-copy="${inst.modelRouteName || inst.effectiveModel}" title="Copy Model ID (unique route name for use with /v1/chat/completions)">&#x1F4CB;</button>
             <button class="icon-btn icon-clone" data-action="clone" data-id="${inst.id}" title="Clone Setup">&#x2398;</button>
           </div>
         </td>
