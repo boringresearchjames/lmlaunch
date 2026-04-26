@@ -701,6 +701,160 @@ function proxyRequestHeaders(req, instance) {
   return headers;
 }
 
+// ---------------------------------------------------------------------------
+// Model-name routing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a short canonical name for a model path used as the routing key.
+ * Strips directory prefix and common file extensions so that callers can
+ * supply either the full path or just the stem (e.g. "Qwen2.5-7B-Q4_K_M").
+ */
+function resolveModelName(effectiveModel) {
+  if (!effectiveModel) return null;
+  const base = path.basename(effectiveModel);
+  return base.replace(/\.(gguf|bin|safetensors|pt|pth|ggml)$/i, "");
+}
+
+/**
+ * Resolves a `model` string from an OpenAI-compatible request to a single
+ * running, non-draining instance.
+ *
+ * Returns one of:
+ *   { instance }              — exactly one match found
+ *   { error, status }         — 400 / 404
+ *   { error, status, instances } — 409 conflict (multiple matches)
+ */
+function resolveInstanceByModelName(modelName) {
+  if (!modelName) {
+    return { error: "model field is required", status: 400 };
+  }
+  const running = state.instances.filter((x) => x.state !== "stopped" && !x.drain);
+  const matches = running.filter((inst) => {
+    if (!inst.effectiveModel) return false;
+    const stem = resolveModelName(inst.effectiveModel);
+    return (
+      inst.effectiveModel === modelName ||
+      path.basename(inst.effectiveModel) === modelName ||
+      stem === modelName ||
+      inst.profileName === modelName
+    );
+  });
+
+  if (matches.length === 0) {
+    return { error: `No running instance found for model '${modelName}'`, status: 404 };
+  }
+  if (matches.length > 1) {
+    return {
+      error: `Ambiguous: ${matches.length} running instances serve model '${modelName}'. Use the per-instance proxy URL instead.`,
+      status: 409,
+      instances: matches.map((x) => x.id)
+    };
+  }
+  return { instance: matches[0] };
+}
+
+// ---------------------------------------------------------------------------
+// Shared proxy core — used by per-instance proxy and model-routing endpoints
+// ---------------------------------------------------------------------------
+
+async function proxyToInstance(instance, req, res, targetUrl) {
+  const method = String(req.method || "GET").toUpperCase();
+  const bodyAllowed = !["GET", "HEAD"].includes(method);
+  const headers = proxyRequestHeaders(req, instance);
+
+  let body;
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  const isJsonRequest = contentType.includes("application/json");
+  if (bodyAllowed) {
+    if (isJsonRequest) {
+      body = req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : undefined;
+    } else {
+      body = req;
+    }
+  }
+
+  const abortController = new AbortController();
+  req.on("aborted", () => { if (!res.writableEnded) abortController.abort(); });
+  res.on("close", () => { if (!res.writableEnded) abortController.abort(); });
+
+  let finalized = false;
+  const finalize = () => {
+    if (finalized) return;
+    finalized = true;
+    updateInstanceRequestMetrics(instance, -1);
+  };
+
+  updateInstanceRequestMetrics(instance, 1);
+
+  const isDiagnosticChat = method === "POST"
+    && String(targetUrl || "").toLowerCase().includes("chat/completions");
+
+  try {
+    const upstream = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+      duplex: bodyAllowed && !isJsonRequest ? "half" : undefined,
+      signal: abortController.signal
+    });
+
+    res.status(upstream.status);
+    copyProxyResponseHeaders(upstream.headers, res);
+
+    const upstreamContentType = String(upstream.headers.get("content-type") || "").toLowerCase();
+    const isJson = upstreamContentType.includes("application/json");
+    const isSse = upstreamContentType.includes("text/event-stream");
+
+    if (!upstream.body || (isJson && !isSse)) {
+      const raw = await upstream.text();
+      markProxyCompletion(instance);
+      if (isJson && raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          updateInstanceUsageMetrics(instance, parsed);
+        } catch {
+          // Keep proxy transparent even when upstream JSON is malformed.
+        }
+      }
+      if (isDiagnosticChat) {
+        const preview = String(raw || "").replace(/\s+/g, " ").slice(0, 280);
+        audit("proxy.chat.response", {
+          instanceId: instance.id,
+          status: upstream.status,
+          contentType: upstreamContentType,
+          responseBytes: String(raw || "").length,
+          preview
+        });
+      }
+      saveState(state);
+      finalize();
+      return res.send(raw);
+    }
+
+    if (isDiagnosticChat) {
+      audit("proxy.chat.stream", {
+        instanceId: instance.id,
+        status: upstream.status,
+        contentType: upstreamContentType
+      });
+    }
+
+    const stream = Readable.fromWeb(upstream.body);
+    stream.on("end", finalize);
+    stream.on("error", () => {
+      finalize();
+      if (!res.writableEnded) res.end();
+    });
+    res.on("close", finalize);
+    stream.pipe(res);
+  } catch (error) {
+    finalize();
+    if (abortController.signal.aborted) return;
+    res.status(502).json({ error: { message: String(error.message || error), type: "server_error", param: null, code: "upstream_error" } });
+  }
+}
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "api", at: now() });
 });
@@ -815,6 +969,24 @@ app.get("/help", (_req, res) => {
   -H "Authorization: Bearer &lt;token&gt;" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"...", "messages":[{"role":"user","content":"Hello"}]}'</pre>
+  </div>
+
+  <h2>Model-Name Routing</h2>
+  <div class="endpoint">
+    <span class="method get">GET</span><code>/v1/models</code>
+    <p>List all running (non-draining) instances as OpenAI-compatible model objects. Each <code>id</code> is the model filename stem (e.g. <code>Qwen2.5-7B-Q4_K_M</code>). Extra fields: <code>instance_id</code>, <code>profile_name</code>, <code>effective_model</code>.</p>
+  </div>
+  <div class="endpoint">
+    <span class="method post">POST</span><code>/v1/chat/completions</code>
+    <p>OpenAI-compatible chat completions routed by model name. The <code>model</code> field is matched against each running instance's model filename stem, full basename, full path, or profile name — in that order. Returns <code>404</code> if no match, <code>409</code> if ambiguous (multiple instances serve the same name).</p>
+    <pre>curl http://localhost:8081/v1/chat/completions \\
+  -H "Authorization: Bearer &lt;token&gt;" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"Qwen2.5-7B-Q4_K_M", "messages":[{"role":"user","content":"Hello"}]}'</pre>
+  </div>
+  <div class="endpoint">
+    <span class="method post">POST</span><code>/v1/completions</code>
+    <p>OpenAI-compatible text completions routed by model name. Same routing rules as <code>/v1/chat/completions</code>.</p>
   </div>
 
   <h2>Manifest</h2>
@@ -1507,8 +1679,20 @@ app.get("/v1/instances", async (_req, res) => {
     ...inst,
     advertisedHost: resolveAdvertisedHost(inst),
     baseUrl: instancePublicBaseUrl(inst),
-    proxyBaseUrl: `${apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`
+    proxyBaseUrl: `${apiBase}/v1/instances/${encodeURIComponent(inst.id)}/proxy/v1`,
+    modelRouteName: resolveModelName(inst.effectiveModel) || inst.effectiveModel || null
   }));
+
+  // Flag instances whose model name is ambiguous (>1 non-stopped instance shares it).
+  const modelNameCounts = new Map();
+  for (const inst of state.instances.filter((x) => x.state !== "stopped")) {
+    const key = resolveModelName(inst.effectiveModel) || inst.effectiveModel;
+    if (key) modelNameCounts.set(key, (modelNameCounts.get(key) || 0) + 1);
+  }
+  for (const inst of data) {
+    const key = inst.modelRouteName;
+    inst.modelNameAmbiguous = Boolean(key && (modelNameCounts.get(key) || 0) > 1);
+  }
 
   res.json({ data, gpus: gpuData });
 });
@@ -1555,6 +1739,19 @@ app.post("/v1/instances/start", async (req, res) => {
       error: "port already in use by running instance",
       port: launchPort,
       instanceId: portConflict.id
+    });
+  }
+
+  // Model-name uniqueness check: prevent ambiguous routing when the same model
+  // basename is already served by a running instance.
+  const newModelStem = resolveModelName(modelToUse);
+  const modelConflict = activeInstances.find((x) =>
+    x.effectiveModel && resolveModelName(x.effectiveModel) === newModelStem
+  );
+  if (modelConflict) {
+    return res.status(409).json({
+      error: `A running instance already serves model '${newModelStem}'. Stop it first, or use a different model path to avoid routing ambiguity.`,
+      conflictingInstanceId: modelConflict.id
     });
   }
 
@@ -1825,6 +2022,62 @@ app.post("/v1/instances/:id/model", (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Model-name routed endpoints (OpenAI-compatible root-level API)
+// ---------------------------------------------------------------------------
+
+app.get("/v1/models", (_req, res) => {
+  const running = state.instances.filter((x) => x.state !== "stopped" && !x.drain);
+  const data = running.map((inst) => ({
+    id: resolveModelName(inst.effectiveModel) || inst.effectiveModel || inst.id,
+    object: "model",
+    created: Math.floor((inst.startedAt ? new Date(inst.startedAt).getTime() : Date.now()) / 1000),
+    owned_by: "llamafleet",
+    instance_id: inst.id,
+    profile_name: inst.profileName,
+    effective_model: inst.effectiveModel
+  }));
+  res.json({ object: "list", data });
+});
+
+app.post("/v1/chat/completions", async (req, res) => {
+  const modelName = String(req.body?.model || "").trim();
+  const resolved = resolveInstanceByModelName(modelName);
+  if (resolved.error) {
+    return res.status(resolved.status).json({
+      error: {
+        message: resolved.error,
+        type: "invalid_request_error",
+        param: "model",
+        code: resolved.status === 404 ? "model_not_found" : "model_ambiguous",
+        ...(resolved.instances ? { instances: resolved.instances } : {})
+      }
+    });
+  }
+  const queryIndex = String(req.originalUrl || "").indexOf("?");
+  const query = queryIndex >= 0 ? String(req.originalUrl).slice(queryIndex) : "";
+  return proxyToInstance(resolved.instance, req, res, `${instanceBaseUrl(resolved.instance)}/v1/chat/completions${query}`);
+});
+
+app.post("/v1/completions", async (req, res) => {
+  const modelName = String(req.body?.model || "").trim();
+  const resolved = resolveInstanceByModelName(modelName);
+  if (resolved.error) {
+    return res.status(resolved.status).json({
+      error: {
+        message: resolved.error,
+        type: "invalid_request_error",
+        param: "model",
+        code: resolved.status === 404 ? "model_not_found" : "model_ambiguous",
+        ...(resolved.instances ? { instances: resolved.instances } : {})
+      }
+    });
+  }
+  const queryIndex = String(req.originalUrl || "").indexOf("?");
+  const query = queryIndex >= 0 ? String(req.originalUrl).slice(queryIndex) : "";
+  return proxyToInstance(resolved.instance, req, res, `${instanceBaseUrl(resolved.instance)}/v1/completions${query}`);
+});
+
 app.all("/v1/instances/:id/proxy/*", async (req, res) => {
   const instance = state.instances.find((x) => x.id === req.params.id);
   if (!instance) return res.status(404).json({ error: { message: "instance not found", type: "invalid_request_error", param: "id", code: "instance_not_found" } });
@@ -1837,116 +2090,7 @@ app.all("/v1/instances/:id/proxy/*", async (req, res) => {
   const queryIndex = String(req.originalUrl || "").indexOf("?");
   const query = queryIndex >= 0 ? String(req.originalUrl).slice(queryIndex) : "";
   const targetUrl = `${instanceBaseUrl(instance)}/${tailPath}${query}`;
-  const method = String(req.method || "GET").toUpperCase();
-  const bodyAllowed = !["GET", "HEAD"].includes(method);
-
-  const headers = proxyRequestHeaders(req, instance);
-
-  let body;
-  const contentType = String(req.headers["content-type"] || "").toLowerCase();
-  const isJsonRequest = contentType.includes("application/json");
-  if (bodyAllowed) {
-    if (isJsonRequest) {
-      body = req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : undefined;
-    } else {
-      body = req;
-    }
-  }
-
-  const abortController = new AbortController();
-  // `req.close` fires after request body completion for normal POSTs; using it
-  // would cancel healthy upstream inference calls. Abort only on real disconnects.
-  req.on("aborted", () => {
-    if (!res.writableEnded) {
-      abortController.abort();
-    }
-  });
-  res.on("close", () => {
-    if (!res.writableEnded) {
-      abortController.abort();
-    }
-  });
-
-  let finalized = false;
-  const finalize = () => {
-    if (finalized) return;
-    finalized = true;
-    updateInstanceRequestMetrics(instance, -1);
-  };
-
-  updateInstanceRequestMetrics(instance, 1);
-
-  try {
-    const upstream = await fetch(targetUrl, {
-      method,
-      headers,
-      body,
-      duplex: bodyAllowed && !isJsonRequest ? "half" : undefined,
-      signal: abortController.signal
-    });
-
-    res.status(upstream.status);
-    copyProxyResponseHeaders(upstream.headers, res);
-
-    const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
-    const isJson = contentType.includes("application/json");
-    const isSse = contentType.includes("text/event-stream");
-    const isDiagnosticChat = method === "POST"
-      && String(tailPath || "").toLowerCase().includes("chat/completions");
-
-    if (!upstream.body || (isJson && !isSse)) {
-      const raw = await upstream.text();
-      markProxyCompletion(instance);
-      if (isJson && raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          updateInstanceUsageMetrics(instance, parsed);
-        } catch {
-          // Keep proxy transparent even when upstream JSON is malformed.
-        }
-      }
-
-      if (isDiagnosticChat) {
-        const preview = String(raw || "").replace(/\s+/g, " ").slice(0, 280);
-        audit("proxy.chat.response", {
-          instanceId: instance.id,
-          status: upstream.status,
-          contentType,
-          responseBytes: String(raw || "").length,
-          preview
-        });
-      }
-
-      saveState(state);
-      finalize();
-      return res.send(raw);
-    }
-
-    if (isDiagnosticChat) {
-      audit("proxy.chat.stream", {
-        instanceId: instance.id,
-        status: upstream.status,
-        contentType
-      });
-    }
-
-    const stream = Readable.fromWeb(upstream.body);
-    stream.on("end", finalize);
-    stream.on("error", () => {
-      finalize();
-      if (!res.writableEnded) {
-        res.end();
-      }
-    });
-    res.on("close", finalize);
-    stream.pipe(res);
-  } catch (error) {
-    finalize();
-    if (abortController.signal.aborted) {
-      return;
-    }
-    res.status(502).json({ error: { message: String(error.message || error), type: "server_error", param: null, code: "upstream_error" } });
-  }
+  return proxyToInstance(instance, req, res, targetUrl);
 });
 
 app.get("/v1/instances/:id/logs", async (req, res) => {

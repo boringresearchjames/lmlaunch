@@ -1101,7 +1101,7 @@ async function refreshInstances() {
           ${activityChipHtml(inst)}
         </td>
         <td>
-          <div title="${escapeHtml(inst.effectiveModel || "-")}">${escapeHtml(trimModelPath(inst.effectiveModel || "-"))}</div>
+          <div title="${escapeHtml(inst.effectiveModel || "-")}">${escapeHtml(trimModelPath(inst.effectiveModel || "-"))}${inst.modelNameAmbiguous ? ' <span title="Multiple running instances share this model name — routing via /v1/chat/completions will return 409. Stop one instance or use different model paths." style="color:#ffbe5c;cursor:default;">⚠</span>' : ''}</div>
           <div class="runtime-meta">ctx: ${inst.contextLength || "auto"}</div>
           <div class="runtime-meta">runtime: ${escapeHtml(runtimeLabel)}</div>
           <div class="runtime-meta" title="${escapeHtml(Array.isArray(inst.runtime?.serverArgs) && inst.runtime.serverArgs.length > 0 ? inst.runtime.serverArgs.join(" ") : "(none)")}">args: ${escapeHtml(trimArgsModelPaths(Array.isArray(inst.runtime?.serverArgs) && inst.runtime.serverArgs.length > 0 ? inst.runtime.serverArgs.join(" ") : "(none)"))}</div>
