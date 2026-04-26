@@ -2037,10 +2037,24 @@ app.get("/v1/instances/:id/connection", (req, res) => {
 });
 
 app.get("/v1/local-models", (_req, res) => {
-  const results = [];
-  const scanDir = path.resolve(modelsDir.replace(/^~/, os.homedir()));
+  const home = os.homedir();
+  const primaryDir = path.resolve(modelsDir.replace(/^~/, home));
 
-  function walk(dir) {
+  // Well-known model directories for popular local-inference tools.
+  // Each entry is checked in order; non-existent paths are skipped silently.
+  // Results from extra dirs are prefixed with the tool tag for clarity.
+  const extraDirs = [
+    { dir: path.join(home, ".ollama", "models"), tag: "ollama" },
+    { dir: "/usr/share/ollama/.ollama/models", tag: "ollama" },
+    { dir: path.join(home, ".cache", "huggingface", "hub"), tag: "huggingface" },
+    { dir: path.join(home, "unsloth_studio"), tag: "unsloth" },
+  ];
+
+  const seen = new Set();
+  const results = [];
+  const dirsScanned = [];
+
+  function walk(dir, baseDir, tagPrefix) {
     let entries;
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -2050,26 +2064,41 @@ app.get("/v1/local-models", (_req, res) => {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        walk(fullPath);
+        walk(fullPath, baseDir, tagPrefix);
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".gguf")) {
+        if (seen.has(fullPath)) continue;
+        seen.add(fullPath);
         const lower = entry.name.toLowerCase();
         // Skip non-first shards: files matching -NNNNN-of-NNNNN.gguf where NNNNN != 00001
         const shardMatch = lower.match(/-(\d{5})-of-(\d{5})\.gguf$/);
         if (shardMatch && shardMatch[1] !== "00001") continue;
-        const rel = path.relative(scanDir, fullPath);
+        const rel = path.relative(baseDir, fullPath);
+        const name = tagPrefix ? `[${tagPrefix}] ${rel}` : rel;
         const shards = shardMatch ? parseInt(shardMatch[2], 10) : null;
-        results.push({ id: fullPath, name: rel, shards });
+        results.push({ id: fullPath, name, shards });
       }
     }
   }
 
-  if (!fs.existsSync(scanDir)) {
-    return res.json({ data: [], warning: `Models directory not found: ${scanDir}` });
+  // Primary dir (MODELS_DIR / LM Studio default) — no tag prefix, preserving existing behaviour.
+  if (fs.existsSync(primaryDir)) {
+    dirsScanned.push(primaryDir);
+    walk(primaryDir, primaryDir, null);
   }
 
-  walk(scanDir);
+  // Extra dirs — only scan if they exist and are not the same as primaryDir.
+  for (const { dir, tag } of extraDirs) {
+    if (dir === primaryDir || !fs.existsSync(dir)) continue;
+    dirsScanned.push(dir);
+    walk(dir, dir, tag);
+  }
+
+  if (results.length === 0 && dirsScanned.length === 0) {
+    return res.json({ data: [], warning: `Models directory not found: ${primaryDir}` });
+  }
+
   results.sort((a, b) => a.name.localeCompare(b.name));
-  return res.json({ data: results, dir: scanDir });
+  return res.json({ data: results, dir: primaryDir, dirs: dirsScanned });
 });
 
 app.get("/v1/audit", (_req, res) => {

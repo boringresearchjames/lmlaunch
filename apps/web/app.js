@@ -864,7 +864,7 @@ async function loadModelList(selectElementId) {
     if (warning) {
       toast(`No models found: ${warning}`);
     } else {
-      toast("No .gguf files found. Check MODELS_DIR in llamafleet.env.");
+      toast("No .gguf files found. Check MODELS_DIR in llamafleet.env (also scans Ollama, HuggingFace, and Unsloth defaults).");
     }
   } catch (error) {
     const hint = error.message.includes("401") || error.message.toLowerCase().includes("unauthorized")

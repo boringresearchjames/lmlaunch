@@ -218,7 +218,7 @@ npm run start:api
 | `BRIDGE_URL` | `http://127.0.0.1:8090` | URL of the host bridge |
 | `STATE_FILE` | `./data/state.json` | Persistent state path |
 | `SHARED_CONFIG_FILE` | `./data/shared-config.yaml` | Shared config (profiles, security) |
-| `MODELS_DIR` | `~/.lmstudio/models` | Directory scanned for `.gguf` files |
+| `MODELS_DIR` | `~/.lmstudio/models` | Primary directory scanned for `.gguf` files. Additional locations are auto-scanned automatically: `~/.ollama/models`, `~/.cache/huggingface/hub`, `~/unsloth_studio` |
 | `LLAMAFLEET_PUBLIC_HOST` | *(unset)* | This machine's IP, used in proxy URLs shown in the dashboard |
 | `CORS_ORIGIN` | `*` | Value of `Access-Control-Allow-Origin` |
 
