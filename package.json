@@ -1,7 +1,7 @@
 {
   "name": "llamafleet",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "scripts": {
     "dev": "node scripts/run-native.mjs --dev",
     "dev:api": "npm --prefix apps/api run dev",
