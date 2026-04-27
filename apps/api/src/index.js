@@ -2604,6 +2604,13 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
           job.abortController.signal.removeEventListener("abort", onAbort);
         }
         if (streamErr) throw streamErr;
+        // reader.cancel() resolves reader.read() with done:true, which can win the race against
+        // abortRace — guard here so an abort mid-stream never triggers the rename/done path.
+        if (job.abortController.signal.aborted) {
+          const e = new Error("Paused");
+          e.name = "AbortError";
+          throw e;
+        }
         // fileHandle.end() flushes all pending writes and closes the stream; close() does not wait.
         await new Promise((resolve, reject) => fileHandle.end((err) => (err ? reject(err) : resolve())));
         fileHandle = null;
