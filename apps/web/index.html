@@ -40,6 +40,13 @@
       </div>
     </header>
 
+    <nav class="page-tabs">
+      <button id="tabInstances" class="tab-btn tab-btn-active" type="button">⚡ Instances</button>
+      <button id="tabModels" class="tab-btn" type="button">🗄 Models</button>
+      <div id="dlStatusStrip" class="dl-status-strip" hidden></div>
+    </nav>
+
+    <div id="pageInstances">
     <main class="layout">
       <section class="card span-12">
         <div class="section-header">
@@ -238,6 +245,66 @@
         <pre id="configLibraryResult"></pre>
       </section>
     </main>
+    </div><!-- #pageInstances -->
+
+    <div id="pageModels" class="layout" hidden>
+      <!-- HF Token settings strip -->
+      <div class="hub-settings-strip">
+        <span class="hub-settings-label">HuggingFace Token</span>
+        <input id="hfTokenInput" type="password" class="hub-token-input" placeholder="hf_… (optional, for gated models)" autocomplete="off" />
+        <button id="hfTokenSave" class="hub-token-save" type="button">Save</button>
+        <span id="hfTokenStatus" class="hub-token-status"></span>
+      </div>
+
+      <!-- Favorites -->
+      <section class="card span-12" id="hubFavoritesCard">
+        <div class="section-header">
+          <div><h2>⭐ Favorites</h2><p class="card-subtitle">Pinned models — click Launch to pre-fill the instance launcher.</p></div>
+        </div>
+        <div id="hubFavoritesList" class="hub-favorites-list"><span class="hub-empty">No favorites yet. Pin models from search results below.</span></div>
+      </section>
+
+      <!-- Active Downloads -->
+      <section class="card span-12" id="hubDownloadsCard" hidden>
+        <div class="section-header">
+          <div><h2>↓ Downloads</h2><p class="card-subtitle">Active and recent downloads.</p></div>
+          <button id="hubDownloadsClear" class="copy" type="button">Clear Completed</button>
+        </div>
+        <div id="hubDownloadsList" class="hub-downloads-list"></div>
+      </section>
+
+      <!-- Browse collections -->
+      <section class="card span-12">
+        <div class="section-header">
+          <div><h2>Browse Libraries</h2><p class="card-subtitle">Top GGUF repos from popular publishers.</p></div>
+        </div>
+        <div class="hub-collection-grid">
+          <button class="hub-collection-tile" data-source="unsloth">🦥 Unsloth</button>
+          <button class="hub-collection-tile" data-source="bartowski">🎯 bartowski</button>
+          <button class="hub-collection-tile" data-source="lmstudio-community">🖥 LM Studio</button>
+          <button class="hub-collection-tile" data-source="thebloke">📦 TheBloke</button>
+        </div>
+      </section>
+
+      <!-- Search -->
+      <section class="card span-12">
+        <div class="section-header">
+          <div><h2>Search HuggingFace</h2><p class="card-subtitle">Searches for GGUF-format models sorted by downloads.</p></div>
+        </div>
+        <div class="hub-search-row">
+          <input id="hubSearchInput" class="launch-input hub-search-input" type="text" placeholder="e.g. llama 3.1 8b" />
+          <button id="hubSearchBtn" class="launch-start" type="button">Search</button>
+        </div>
+        <div class="hub-filter-pills">
+          <button class="hub-pill hub-pill-active" data-author="" data-tags="">All</button>
+          <button class="hub-pill" data-author="unsloth" data-tags="">Unsloth</button>
+          <button class="hub-pill" data-author="" data-tags="gguf,ollama">Ollama</button>
+          <button class="hub-pill" data-author="lmstudio-community" data-tags="">LM Studio</button>
+          <button class="hub-pill" data-author="bartowski" data-tags="">bartowski</button>
+        </div>
+        <div id="hubResultsList" class="hub-results-list"><span class="hub-empty">Search or browse a library above.</span></div>
+      </section>
+    </div><!-- #pageModels -->
 
     <pre id="toast"></pre>
 

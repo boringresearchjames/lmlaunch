@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 const webRoot = path.resolve(__dirname, "..", "..", "web");
 
 const corsOrigin = process.env.CORS_ORIGIN || "*";
-const corsHeaders = "Authorization, Content-Type, X-Bridge-Token";
+const corsHeaders = "Authorization, Content-Type, X-Bridge-Token, X-HF-Token";
 
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", corsOrigin);
@@ -2354,6 +2354,243 @@ app.get("/v1/local-models", (_req, res) => {
   return res.json({ data: results, dir: primaryDir, dirs: dirsScanned });
 });
 
+// ── HuggingFace Hub proxy endpoints ─────────────────────────────────────────
+
+const HF_API = "https://huggingface.co";
+
+// In-memory download job store
+const hubDownloadJobs = new Map();
+
+function parseQuantTier(filename) {
+  const f = filename.toUpperCase();
+  if (/IQ[234]_[A-Z0-9_]+/.test(f)) return { tier: "imatrix", label: f.match(/IQ[234]_[A-Z0-9_]+/)[0] };
+  if (/Q8_0/.test(f)) return { tier: "quality", label: "Q8_0" };
+  if (/Q6_K/.test(f)) return { tier: "quality", label: "Q6_K" };
+  if (/Q5_K_M/.test(f)) return { tier: "balanced", label: "Q5_K_M" };
+  if (/Q5_K_S/.test(f)) return { tier: "balanced", label: "Q5_K_S" };
+  if (/Q5_K/.test(f)) return { tier: "balanced", label: "Q5_K" };
+  if (/Q4_K_M/.test(f)) return { tier: "recommended", label: "Q4_K_M" };
+  if (/Q4_K_S/.test(f)) return { tier: "recommended", label: "Q4_K_S" };
+  if (/Q4_K/.test(f)) return { tier: "recommended", label: "Q4_K" };
+  if (/IQ4_XS/.test(f)) return { tier: "recommended", label: "IQ4_XS" };
+  if (/Q4_0/.test(f)) return { tier: "recommended", label: "Q4_0" };
+  if (/Q3_K_M/.test(f)) return { tier: "imatrix", label: "Q3_K_M" };
+  if (/Q2_K/.test(f)) return { tier: "imatrix", label: "Q2_K" };
+  if (/BF16/.test(f)) return { tier: "large", label: "BF16" };
+  if (/F16/.test(f)) return { tier: "large", label: "F16" };
+  if (/F32/.test(f)) return { tier: "large", label: "F32" };
+  const qMatch = f.match(/[QIq]\d[_A-Z0-9]*/);
+  if (qMatch) return { tier: "other", label: qMatch[0] };
+  return { tier: "other", label: "GGUF" };
+}
+
+async function hfFetch(urlPath, hfToken) {
+  const headers = { "User-Agent": "LlamaFleet/1.0" };
+  if (hfToken) headers["Authorization"] = `Bearer ${hfToken}`;
+  const res = await fetch(`${HF_API}${urlPath}`, { headers });
+  if (!res.ok) throw Object.assign(new Error(`HF API ${res.status}`), { status: res.status });
+  return res;
+}
+
+// GET /v1/hub/search?q=&limit=20&author=&tags=
+app.get("/v1/hub/search", requireAdminToken, async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+    const author = String(req.query.author || "").trim();
+    const tags = String(req.query.tags || "").trim();
+    const hfToken = String(req.headers["x-hf-token"] || "").trim() || undefined;
+
+    const params = new URLSearchParams({
+      search: q,
+      filter: "gguf",
+      sort: "downloads",
+      direction: "-1",
+      limit: String(limit),
+      full: "false",
+    });
+    if (author) params.set("author", author);
+    if (tags) params.set("tags", tags);
+
+    const hfRes = await hfFetch(`/api/models?${params}`, hfToken);
+    const models = await hfRes.json();
+    const data = models.map((m) => ({
+      id: m.modelId || m.id,
+      downloads: m.downloads || 0,
+      likes: m.likes || 0,
+      tags: m.tags || [],
+      pipeline: m.pipeline_tag || null,
+      lastModified: m.lastModified || null,
+    }));
+    res.json({ data });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.message });
+  }
+});
+
+// GET /v1/hub/repo/:repoId*/files
+app.get("/v1/hub/repo/:repoId(*)/files", requireAdminToken, async (req, res) => {
+  try {
+    const repoId = req.params.repoId;
+    const hfToken = String(req.headers["x-hf-token"] || "").trim() || undefined;
+    const hfRes = await hfFetch(`/api/models/${encodeURIComponent(repoId)}`, hfToken);
+    const model = await hfRes.json();
+    const siblings = (model.siblings || []).filter((s) => s.rfilename && s.rfilename.toLowerCase().endsWith(".gguf"));
+    const files = siblings.map((s) => {
+      const { tier, label } = parseQuantTier(s.rfilename);
+      return { filename: s.rfilename, size: s.size || null, quantLabel: label, quantTier: tier };
+    });
+    // Sort: recommended first, then balanced, quality, imatrix, large, other
+    const tierOrder = { recommended: 0, balanced: 1, quality: 2, imatrix: 3, large: 4, other: 5 };
+    files.sort((a, b) => (tierOrder[a.quantTier] ?? 5) - (tierOrder[b.quantTier] ?? 5) || a.filename.localeCompare(b.filename));
+    res.json({ data: files, repoId, cardData: { modelId: model.modelId, downloads: model.downloads, likes: model.likes, tags: model.tags } });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.message });
+  }
+});
+
+// GET /v1/hub/collections?source=unsloth|bartowski|lmstudio-community|thebloke
+app.get("/v1/hub/collections", requireAdminToken, async (req, res) => {
+  const source = String(req.query.source || "unsloth").toLowerCase();
+  const authorMap = {
+    unsloth: "unsloth",
+    bartowski: "bartowski",
+    "lmstudio-community": "lmstudio-community",
+    thebloke: "TheBloke",
+  };
+  const author = authorMap[source] || source;
+  const hfToken = String(req.headers["x-hf-token"] || "").trim() || undefined;
+  try {
+    const params = new URLSearchParams({ author, filter: "gguf", sort: "downloads", direction: "-1", limit: "30", full: "false" });
+    const hfRes = await hfFetch(`/api/models?${params}`, hfToken);
+    const models = await hfRes.json();
+    const data = models.map((m) => ({
+      id: m.modelId || m.id,
+      downloads: m.downloads || 0,
+      likes: m.likes || 0,
+      lastModified: m.lastModified || null,
+    }));
+    res.json({ data, author });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.message });
+  }
+});
+
+// POST /v1/hub/download  { repoId, filename, hfToken? }
+app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
+  try {
+    const { repoId, filename } = req.body || {};
+    const hfToken = String(req.body?.hfToken || req.headers["x-hf-token"] || "").trim() || undefined;
+
+    if (!repoId || !filename) return res.status(400).json({ error: "repoId and filename required" });
+
+    // Sanitize filename — no path traversal
+    const safeFilename = path.basename(filename);
+    if (safeFilename !== filename || safeFilename.includes("..")) {
+      return res.status(400).json({ error: "Invalid filename" });
+    }
+    if (!safeFilename.toLowerCase().endsWith(".gguf")) {
+      return res.status(400).json({ error: "Only .gguf files allowed" });
+    }
+
+    const home = os.homedir();
+    const destDir = path.resolve(modelsDir.replace(/^~/, home));
+    fs.mkdirSync(destDir, { recursive: true });
+    const destPath = path.join(destDir, safeFilename);
+    const partPath = destPath + ".part";
+
+    // Check if already running for same file
+    for (const job of hubDownloadJobs.values()) {
+      if (job.destPath === destPath && (job.status === "downloading" || job.status === "pending")) {
+        return res.json({ id: job.id, resumed: false, alreadyRunning: true });
+      }
+    }
+
+    // Resume support: check for .part file
+    let resumedFrom = 0;
+    if (fs.existsSync(partPath)) {
+      try { resumedFrom = fs.statSync(partPath).size; } catch { resumedFrom = 0; }
+    }
+
+    const jobId = crypto.randomUUID();
+    const job = {
+      id: jobId, repoId, filename: safeFilename, destPath, partPath,
+      bytesReceived: resumedFrom, totalBytes: null, resumedFrom,
+      status: "pending", error: null, abortController: new AbortController(),
+    };
+    hubDownloadJobs.set(jobId, job);
+
+    // Start download async (don't await)
+    (async () => {
+      try {
+        job.status = "downloading";
+        const dlUrl = `${HF_API}/${repoId}/resolve/main/${encodeURIComponent(safeFilename)}?download=true`;
+        const headers = { "User-Agent": "LlamaFleet/1.0" };
+        if (hfToken) headers["Authorization"] = `Bearer ${hfToken}`;
+        if (resumedFrom > 0) headers["Range"] = `bytes=${resumedFrom}-`;
+
+        const dlRes = await fetch(dlUrl, { headers, signal: job.abortController.signal, redirect: "follow" });
+        if (!dlRes.ok) throw new Error(`HF download ${dlRes.status}`);
+
+        const contentLength = dlRes.headers.get("content-length");
+        job.totalBytes = contentLength ? resumedFrom + Number(contentLength) : null;
+
+        const fileHandle = fs.createWriteStream(partPath, { flags: resumedFrom > 0 ? "a" : "w" });
+        const reader = dlRes.body.getReader();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          fileHandle.write(value);
+          job.bytesReceived += value.length;
+        }
+        fileHandle.close();
+
+        // Rename .part → final
+        fs.renameSync(partPath, destPath);
+        job.status = "done";
+      } catch (err) {
+        if (err.name === "AbortError") {
+          job.status = "paused";
+        } else {
+          job.status = "error";
+          job.error = err.message;
+        }
+      }
+    })();
+
+    res.json({ id: jobId, resumedFrom });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /v1/hub/downloads
+app.get("/v1/hub/downloads", requireAdminToken, (_req, res) => {
+  const jobs = [];
+  for (const job of hubDownloadJobs.values()) {
+    const pct = job.totalBytes ? Math.round((job.bytesReceived / job.totalBytes) * 100) : null;
+    jobs.push({
+      id: job.id, repoId: job.repoId, filename: job.filename,
+      bytesReceived: job.bytesReceived, totalBytes: job.totalBytes,
+      resumedFrom: job.resumedFrom, status: job.status, pct, error: job.error,
+    });
+  }
+  res.json({ data: jobs });
+});
+
+// DELETE /v1/hub/downloads/:id  — abort but keep .part for resume
+app.delete("/v1/hub/downloads/:id", requireAdminToken, (req, res) => {
+  const job = hubDownloadJobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (job.status === "downloading" || job.status === "pending") {
+    job.abortController.abort();
+  }
+  res.json({ ok: true, id: job.id, partKept: true });
+});
+
+// ── End HuggingFace Hub proxy ────────────────────────────────────────────────
+
 app.get("/v1/audit", requireAdminToken, (_req, res) => {
   res.json({ data: state.audit });
 });
@@ -2632,3 +2869,4 @@ setInterval(() => { void pollInstanceHealth(); }, HEALTH_POLL_INTERVAL_MS);
 app.listen(port, () => {
   console.log(`lmlaunch api+web listening on ${port}`);
 });
+
