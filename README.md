@@ -6,12 +6,13 @@ LlamaFleet is a lightweight Node.js control plane and operator dashboard for mul
 
 Each instance runs as an independent `llama-server` process with its own context window, queue limit, TTL, and GPU subset. LlamaFleet tracks state, catches crashes, and auto-restarts instances with configurable backoff.
 
-Every instance is reachable through a single **OpenAI-compatible API** at `http://host:8081/v1/instances/<id>/proxy/v1/...` — same bearer token, same `/v1/chat/completions` and `/v1/completions` endpoints. A top-level `/v1/chat/completions` endpoint also routes by model name, so you can set `base_url = http://host:8081/v1` once and use model names directly.
+Every instance is reachable through a single **OpenAI-compatible API** at `http://host:8081/v1/instances/<id>/proxy/v1/...` — same bearer token, same `/v1/chat/completions` and `/v1/completions` endpoints. A top-level `/v1/chat/completions` endpoint routes by model name with automatic round-robin across instances sharing the same model, so you can set `base_url = http://host:8081/v1` once and let LlamaFleet handle load distribution.
 
 **Key capabilities:**
 - Per-instance GPU pinning via `CUDA_VISIBLE_DEVICES` and equivalents for AMD/Intel/Metal
 - Headless process management — start, stop, drain, kill, remove from the browser or API
 - OpenAI-compatible reverse proxy per instance — all `llama-server` processes bind to `127.0.0.1`; one port for everything
+- **Named model routing with round-robin pool support** — `POST /v1/chat/completions` with `"model": "MyModel"` round-robins across all running instances of that model; append `-1`, `-2`, etc. to pin to a specific instance (e.g. `"model": "MyModel-1"`). `GET /v1/models` returns both the pool entry and each pinned alias so any OpenAI client can discover them automatically.
 - Global bearer token auth for both dashboard and all proxy traffic
 - Config profiles — save a model + GPU + context + TTL combination and relaunch in one click
 - Auto-restart with configurable backoff on unclean exits
@@ -19,6 +20,7 @@ Every instance is reachable through a single **OpenAI-compatible API** at `http:
 - Prometheus scrape endpoint at `GET /metrics` (per-instance + per-GPU telemetry)
 - Compact VRAM bars in the GPU column with utilisation %, temperature, and power
 - Log viewer with auto-tail and clone-setup action per instance
+- Model Routing dashboard section — visual overview of which instances form a round-robin pool vs. solo routes, with one-click copy of each pinned model name
 
 LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio required. Works on NVIDIA (including pre-Ampere V100/10xx/20xx), AMD, and CPU.
 
