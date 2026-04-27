@@ -1893,8 +1893,8 @@ function renderFavorites() {
     <div class="hub-fav-item">
       <span class="hub-fav-quant">${quantBadgeHtml(f.quantTier || "other", f.quantLabel || "GGUF")}</span>
       <span class="hub-fav-name" title="${f.repoId} / ${f.filename}">${f.repoId.split("/").pop()} &mdash; ${f.filename}</span>
-      <button class="hub-fav-launch" onclick="hubLaunchFav(${JSON.stringify(f.repoId)},${JSON.stringify(f.filename)})">&#x26A1; Launch</button>
-      <button class="hub-fav-unpin" title="Unpin" onclick="unpinModel(${JSON.stringify(f.repoId)},${JSON.stringify(f.filename)})">&#x2715;</button>
+      <button class="hub-fav-launch" onclick="hubLaunchFav('${f.repoId}','${f.filename}')">&#x26A1; Launch</button>
+      <button class="hub-fav-unpin" title="Unpin" onclick="unpinModel('${f.repoId}','${f.filename}')">&#x2715;</button>
     </div>`).join("");
 }
 
