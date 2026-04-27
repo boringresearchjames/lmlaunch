@@ -25,6 +25,28 @@ Every instance is reachable through a single **OpenAI-compatible API** at `http:
 
 LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio or Ollama required. Works on NVIDIA (including pre-Ampere V100/10xx/20xx), AMD, and CPU.
 
+> **Security note:** LlamaFleet is a **single-tenant control plane** designed for trusted local networks and homelabs. Do not expose port `8081` to the public internet without a reverse proxy and firewall rules. See [SECURITY.md](SECURITY.md) for deployment guidance.
+
+---
+
+## Why LlamaFleet instead of Ollama / LM Studio?
+
+| | LlamaFleet | Ollama | LM Studio |
+|---|---|---|---|
+| Direct `llama-server` control | ✅ Full flags, GPU layers, ctx, threads | ❌ Abstracted | ❌ Abstracted |
+| Per-instance GPU pinning | ✅ Explicit `CUDA_VISIBLE_DEVICES` per process | ❌ Global | ❌ Global |
+| Multiple concurrent instances | ✅ Unlimited, independent processes | ⚠ One model at a time | ⚠ Manual |
+| Round-robin load pooling | ✅ Built-in, OpenAI-compatible | ❌ | ❌ |
+| Heterogeneous pools (GPU + CPU) | ✅ Mix any runtimes under one model name | ❌ | ❌ |
+| Pre-Ampere hardware (V100, 10xx, 20xx) | ✅ llama.cpp supports it | ⚠ Hit-or-miss | ⚠ Hit-or-miss |
+| Any GGUF from any source | ✅ Scan local paths + HF Hub browser | ⚠ Registry only | ⚠ Curated |
+| Browser dashboard + REST API | ✅ | ❌ API only | ✅ GUI only |
+| Multi-user / cloud deployment | ❌ Single-tenant by design | ✅ | ✅ |
+
+**The short version:** if you need to carve up a multi-GPU box, run several models simultaneously with explicit hardware control, and talk to all of them through one OpenAI endpoint — LlamaFleet is built for that. If you want a managed model registry with a polished consumer UX and don't need per-process GPU pinning, Ollama is the simpler choice.
+
+---
+
 ## Dashboard
 
 ![LlamaFleet dashboard](docs/llamafleet-dashboard-v5.png)
