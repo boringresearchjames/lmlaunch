@@ -2,6 +2,7 @@ import express from "express";
 import { execFile, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -849,6 +850,51 @@ app.get("/v1/gpus", (_req, res) => {
       });
     }
   );
+});
+
+// ---------------------------------------------------------------------------
+// Host stats — CPU utilization (sampled delta) + system RAM
+// ---------------------------------------------------------------------------
+
+let _prevCpuSample = os.cpus().map((c) => ({ ...c.times }));
+
+function computeCpuUtilization() {
+  const curr = os.cpus().map((c) => ({ ...c.times }));
+  const perCore = curr.map((core, i) => {
+    const prev = _prevCpuSample[i];
+    if (!prev) return null;
+    const totalDelta =
+      (core.user - prev.user) +
+      (core.nice - prev.nice) +
+      (core.sys  - prev.sys) +
+      (core.idle - prev.idle) +
+      (core.irq  - prev.irq);
+    if (totalDelta === 0) return 0;
+    const idleDelta = core.idle - prev.idle;
+    return Math.round((1 - idleDelta / totalDelta) * 100);
+  }).filter((v) => v !== null);
+  _prevCpuSample = curr;
+  return perCore;
+}
+
+app.get("/v1/host-stats", (_req, res) => {
+  const memTotal = os.totalmem();
+  const memFree  = os.freemem();
+  const loadavg  = os.loadavg();
+  const cpus     = os.cpus();
+  const cpuPerCore = computeCpuUtilization();
+  const cpuAvg = cpuPerCore.length > 0
+    ? Math.round(cpuPerCore.reduce((a, b) => a + b, 0) / cpuPerCore.length)
+    : null;
+  res.json({
+    mem_total_mib: Math.round(memTotal / 1048576),
+    mem_used_mib:  Math.round((memTotal - memFree) / 1048576),
+    loadavg,
+    cpu_count: cpus.length,
+    cpu_model: cpus[0]?.model?.replace(/\s+/g, " ").trim() || "Unknown CPU",
+    cpu_utilization_percent: cpuAvg,
+    cpu_per_core: cpuPerCore
+  });
 });
 
 app.get("/v1/instances", (_req, res) => {

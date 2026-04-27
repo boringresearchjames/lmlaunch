@@ -771,9 +771,11 @@ function resolveInstanceByModelName(modelName) {
   });
 
   if (matches.length === 0) {
+    console.log(`[route] model="${modelName}" -> no match (running=${running.map(i => i.modelRouteName || i.profileName).join(",")})`);
     return { error: `No running instance found for model '${modelName}'`, status: 404 };
   }
   if (matches.length === 1) {
+    console.log(`[route] model="${modelName}" -> ${matches[0].id.slice(0, 8)} port=${matches[0].port} routeName=${matches[0].modelRouteName}`);
     return { instance: matches[0] };
   }
 
@@ -781,7 +783,9 @@ function resolveInstanceByModelName(modelName) {
   const key = modelName;
   const counter = (modelRoundRobinCounters.get(key) || 0) % matches.length;
   modelRoundRobinCounters.set(key, counter + 1);
-  return { instance: matches[counter] };
+  const chosen = matches[counter];
+  console.log(`[route] model="${modelName}" -> ${chosen.id.slice(0, 8)} port=${chosen.port} routeName=${chosen.modelRouteName} (rr ${counter + 1}/${matches.length} matches)`);
+  return { instance: chosen };
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,6 +1542,15 @@ app.get("/v1/gpus", async (_req, res) => {
   }
 });
 
+app.get("/v1/host-stats", async (_req, res) => {
+  try {
+    const result = await bridgeFetch("GET", "/v1/host-stats");
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ error: String(error.message || error) });
+  }
+});
+
 app.get("/v1/profiles", (_req, res) => {
   res.json({ data: state.profiles });
 });
@@ -2134,6 +2147,7 @@ app.get("/v1/models", (_req, res) => {
 });
 
 app.post("/v1/chat/completions", async (req, res) => {
+  console.log(`[http] POST /v1/chat/completions body=${JSON.stringify(req.body)}`);
   const modelName = String(req.body?.model || "").trim();
   const resolved = resolveInstanceByModelName(modelName);
   if (resolved.error) {
@@ -2153,6 +2167,7 @@ app.post("/v1/chat/completions", async (req, res) => {
 });
 
 app.post("/v1/completions", async (req, res) => {
+  console.log(`[http] POST /v1/completions body=${JSON.stringify(req.body)}`);
   const modelName = String(req.body?.model || "").trim();
   const resolved = resolveInstanceByModelName(modelName);
   if (resolved.error) {

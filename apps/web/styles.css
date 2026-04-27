@@ -560,6 +560,81 @@ button:active {
   flex-shrink: 0;
 }
 
+/* ── Instance table host stats footer ─────────────────────────── */
+
+.host-stats-trow td {
+  padding: 7px 14px;
+  border-top: 1px solid rgba(154, 181, 255, 0.14);
+  border-left: 1px solid rgba(154, 181, 255, 0.14);
+  background: rgba(12, 20, 44, 0.5);
+  border-radius: 8px;
+}
+
+.hsf-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hsf-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  margin-right: 2px;
+}
+
+.hsf-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hsf-name {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+.hsf-bar-wrap {
+  width: 64px;
+  height: 5px;
+  background: rgba(159, 176, 216, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.hsf-bar-fill {
+  height: 100%;
+  border-radius: 3px 0 0 3px;
+  transition: width 0.5s ease;
+  min-width: 2px;
+}
+
+.hsf-val {
+  font-size: 11px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  color: var(--ink);
+}
+
+.hsf-muted {
+  font-size: 11px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  color: var(--muted);
+}
+
+.hsf-sep {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .runtime-meta {
   margin-top: 6px;
   font-size: 11px;
@@ -784,6 +859,11 @@ th:last-child,
 td:last-child {
   border-right: 1px solid rgba(159, 176, 216, 0.22);
   border-radius: 0 8px 8px 0;
+}
+
+.host-stats-trow td:first-child,
+.host-stats-trow td:last-child {
+  border-radius: 8px;
 }
 
 th {
@@ -1339,6 +1419,98 @@ pre {
   .instance-logs-controls .button-row {
     grid-column: span 1;
   }
+}
+
+#hostStatsPanel { display: none; }
+
+/* ── Host stats strip (standalone bar between sections) ─────────── */
+
+.host-strip {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 7px 20px;
+  background: rgba(11, 16, 32, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.host-stats-loading {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+.host-strip-stat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.hs-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.hs-bar-wrap {
+  width: 72px;
+  height: 6px;
+  background: rgba(159, 176, 216, 0.12);
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.hs-bar-fill {
+  height: 100%;
+  border-radius: 4px 0 0 4px;
+  transition: width 0.5s ease;
+  min-width: 2px;
+}
+
+.hs-value {
+  font-size: 11px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.hs-muted {
+  font-size: 11px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.hs-cores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 148px;
+  align-content: center;
+}
+
+.hs-core-sq {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  transition: background 0.4s ease;
+}
+
+@media (max-width: 1200px) {
+  .hs-cores { display: none; }
+}
+
+@media (max-width: 960px) {
+  .host-strip { flex-direction: column; align-items: flex-start; }
 }
 
 @media (max-width: 740px) {

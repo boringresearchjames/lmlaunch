@@ -51,6 +51,7 @@ function syncGlobalApiTokenInput() {
 
 let instancesCache = [];
 let gpuTelemetryCache = [];
+let hostStatsCache = null;
 let operationPending = null;
 let operationStatusTimer = null;
 let instanceTestTargetId = null;
@@ -1134,6 +1135,99 @@ function resolveDisplayRouteName(inst, allInstances) {
   return siblings.length > 0 ? `${routeName}-1` : routeName;
 }
 
+function renderHostStats(data) {
+  const panel = $("hostStatsPanel");
+  if (!panel) return;
+
+  const memPct = data.mem_total_mib > 0
+    ? Math.round((data.mem_used_mib / data.mem_total_mib) * 100)
+    : 0;
+  const memUsedGib  = (data.mem_used_mib  / 1024).toFixed(1);
+  const memTotalGib = (data.mem_total_mib / 1024).toFixed(1);
+  const memColor = memPct >= 90 ? "var(--danger)" : memPct >= 70 ? "#ffbe5c" : "var(--accent-2)";
+
+  const cpuPct = data.cpu_utilization_percent ?? 0;
+  const cpuColor = cpuPct >= 90 ? "var(--danger)" : cpuPct >= 60 ? "#ffbe5c" : "var(--accent)";
+  const load1 = data.loadavg ? data.loadavg[0].toFixed(2) : "—";
+
+  const coreSquares = Array.isArray(data.cpu_per_core) && data.cpu_per_core.length > 0
+    ? data.cpu_per_core.map((pct) => {
+        const c = pct >= 80 ? "var(--danger)" : pct >= 40 ? "#ffbe5c" : pct >= 10 ? "var(--accent)" : "rgba(159,176,216,0.18)";
+        return `<span class="hs-core-sq" style="background:${c}" title="${pct}%"></span>`;
+      }).join("")
+    : "";
+
+  panel.innerHTML = `
+    <div class="host-strip-stat">
+      <span class="hs-label">RAM</span>
+      <div class="hs-bar-wrap"><div class="hs-bar-fill" style="width:${memPct}%;background:${memColor}"></div></div>
+      <span class="hs-value">${memUsedGib}/${memTotalGib}&thinsp;GiB</span>
+    </div>
+    <div class="host-strip-stat">
+      <span class="hs-label">CPU</span>
+      <div class="hs-bar-wrap"><div class="hs-bar-fill" style="width:${cpuPct}%;background:${cpuColor}"></div></div>
+      <span class="hs-value">${cpuPct}%</span>
+      <span class="hs-muted">load&thinsp;${load1}</span>
+    </div>
+    ${coreSquares ? `<div class="hs-cores">${coreSquares}</div>` : ""}`;
+}
+
+function renderInstanceStatsFooter() {
+  const tfoot = $("instanceStatsFooter");
+  if (!tfoot) return;
+  if (!hostStatsCache) { tfoot.innerHTML = ""; return; }
+  const d = hostStatsCache;
+  const memPct = d.mem_total_mib > 0 ? Math.round((d.mem_used_mib / d.mem_total_mib) * 100) : 0;
+  const memUsedGib = (d.mem_used_mib / 1024).toFixed(1);
+  const memTotalGib = (d.mem_total_mib / 1024).toFixed(1);
+  const memColor = memPct >= 90 ? "var(--danger)" : memPct >= 70 ? "#ffbe5c" : "var(--accent-2)";
+  const cpuPct = d.cpu_utilization_percent ?? 0;
+  const cpuColor = cpuPct >= 90 ? "var(--danger)" : cpuPct >= 60 ? "#ffbe5c" : "var(--accent)";
+  const load1 = d.loadavg ? d.loadavg[0].toFixed(2) : "\u2014";
+  const coreSquares = Array.isArray(d.cpu_per_core) && d.cpu_per_core.length > 0
+    ? d.cpu_per_core.map((pct) => {
+        const c = pct >= 80 ? 'var(--danger)' : pct >= 40 ? '#ffbe5c' : pct >= 10 ? 'var(--accent)' : 'rgba(159,176,216,0.18)';
+        return `<span class="hs-core-sq" style="background:${c}" title="${pct}%"></span>`;
+      }).join('')
+    : '';
+  tfoot.innerHTML = `
+    <tr class="host-stats-trow">
+      <td colspan="6">
+        <div class="hsf-wrap">
+          <span class="hsf-label">Host</span>
+          <span class="hsf-item">
+            <span class="hsf-name">CPU</span>
+            <div class="hsf-bar-wrap"><div class="hsf-bar-fill" style="width:${cpuPct}%;background:${cpuColor}"></div></div>
+            <span class="hsf-val">${cpuPct}%</span>
+            <span class="hsf-muted">avg &thinsp; load&thinsp;${load1}</span>
+          </span>
+          <span class="hsf-sep">&middot;</span>
+          <span class="hsf-item">
+            <span class="hsf-name">RAM</span>
+            <div class="hsf-bar-wrap"><div class="hsf-bar-fill" style="width:${memPct}%;background:${memColor}"></div></div>
+            <span class="hsf-val">${memUsedGib}/${memTotalGib}&thinsp;GiB</span>
+            <span class="hsf-muted">${memPct}%</span>
+          </span>
+          ${coreSquares ? `<span class="hsf-sep">&middot;</span><div class="hs-cores" style="max-width:none">${coreSquares}</div>` : ''}
+        </div>
+      </td>
+    </tr>`;
+}
+
+async function refreshHostStats() {
+  try {
+    const data = await api("/v1/host-stats");
+    hostStatsCache = data;
+    renderHostStats(data);
+    renderInstanceStatsFooter();
+  } catch {
+    const panel = $("hostStatsPanel");
+    if (panel && panel.querySelector(".host-stats-loading")) {
+      panel.innerHTML = `<span class="host-stats-loading">Host stats unavailable</span>`;
+    }
+  }
+}
+
 async function refreshInstances() {
   try {
     const { data, gpus } = await api("/v1/instances");
@@ -1227,6 +1321,7 @@ async function refreshInstances() {
       launchPort.value = String(suggestNextFreePort(1234));
     }
 
+    renderInstanceStatsFooter();
     applyGpuAvailability();
     renderRoutingMap();
 
@@ -1677,5 +1772,7 @@ void refreshGlobalApiAccess();
 refreshInstances();
 refreshConfigLibrary();
 applyRestartPolicyUi();
+refreshHostStats();
 setInterval(refreshInstances, 2000);
+setInterval(refreshHostStats, 3000);
 setInterval(() => loadSystemGpus("launchGpus"), 15000);

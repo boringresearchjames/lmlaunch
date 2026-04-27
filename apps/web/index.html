@@ -162,11 +162,12 @@
                 <th>State</th>
                 <th>Model</th>
                 <th>Port</th>
-                <th>GPU</th>
+                <th>Stats</th>
                 <th>Controls</th>
               </tr>
             </thead>
             <tbody id="instanceRows"></tbody>
+            <tfoot id="instanceStatsFooter"></tfoot>
           </table>
         </div>
 
@@ -196,6 +197,10 @@
           <pre id="logsView"></pre>
         </div>
       </section>
+
+      <div id="hostStatsPanel" class="host-strip host-strip-bar">
+        <span class="host-stats-loading">Loading&hellip;</span>
+      </div>
 
       <section class="card span-12">
         <div class="section-header">
