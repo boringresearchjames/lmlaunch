@@ -2514,6 +2514,14 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
       }
     }
 
+    // Remove any stale paused/error/done entry for the same file so the new job
+    // is the only entry, preventing duplicate rows and discard/resume collisions.
+    for (const [id, job] of hubDownloadJobs.entries()) {
+      if (job.destPath === destPath && job.status !== "downloading" && job.status !== "pending") {
+        hubDownloadJobs.delete(id);
+      }
+    }
+
     // Resume support: check for .part file
     let resumedFrom = 0;
     if (fs.existsSync(partPath)) {
