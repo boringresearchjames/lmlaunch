@@ -750,6 +750,10 @@ function resolveInstanceByModelName(modelName) {
     return { error: "model field is required", status: 400 };
   }
   const running = state.instances.filter((x) => x.state !== "stopped" && !x.drain);
+  // If the requested name ends in -1, also try matching the bare baseStem
+  // (the first instance in a pool always carries the un-suffixed routeName).
+  const strippedMinus1 = modelName.endsWith("-1") ? modelName.slice(0, -2) : null;
+
   const matches = running.filter((inst) => {
     if (!inst.effectiveModel) return false;
     const stem = resolveModelName(inst.effectiveModel);
@@ -759,7 +763,10 @@ function resolveInstanceByModelName(modelName) {
       inst.effectiveModel === modelName ||
       path.basename(inst.effectiveModel) === modelName ||
       stem === modelName ||
-      inst.profileName === modelName
+      inst.profileName === modelName ||
+      // virtual -1 alias: Qwen3.6-35B-A3B-Q4_K_M-1 resolves to the instance
+      // whose routeName is the bare baseStem (Qwen3.6-35B-A3B-Q4_K_M)
+      (strippedMinus1 !== null && routeName === strippedMinus1)
     );
   });
 
@@ -2105,11 +2112,13 @@ app.get("/v1/models", (_req, res) => {
         pool: true,
         instance_count: members.length
       });
-      // Individual pinned entries for all except the one whose routeName === baseStem
+      // Individual pinned entries for all members.
+      // For the member whose routeName === baseStem (no suffix), emit it as
+      // baseStem-1 so it can be independently addressed like the others.
       for (const { inst, routeName } of members) {
-        if (routeName === baseStem) continue; // covered by pool entry above
+        const pinnedId = routeName === baseStem ? `${baseStem}-1` : routeName;
         data.push({
-          id: routeName,
+          id: pinnedId,
           object: "model",
           created: Math.floor((inst.startedAt ? new Date(inst.startedAt).getTime() : Date.now()) / 1000),
           owned_by: "llamafleet",

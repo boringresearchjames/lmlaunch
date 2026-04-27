@@ -1115,6 +1115,25 @@ $("launchInstance").onclick = async () => {
   }
 };
 
+// Returns the copy-safe route name for an instance.
+// If the instance is the "base" member of a pool (its routeName has no -N suffix
+// but siblings share the same base stem), return routeName + "-1" so it's
+// independently addressable, matching the virtual -1 alias in the API.
+function resolveDisplayRouteName(inst, allInstances) {
+  const routeName = inst.modelRouteName || inst.effectiveModel || "";
+  if (!routeName) return routeName;
+  const baseStem = routeName.replace(/-\d+$/, "");
+  const isBase = routeName === baseStem;
+  if (!isBase) return routeName;
+  // Check if any other active instance shares this base stem
+  const active = (allInstances || instancesCache).filter(x => x.state !== "stopped");
+  const siblings = active.filter(x => {
+    const r = x.modelRouteName || x.effectiveModel || "";
+    return r !== routeName && r.replace(/-\d+$/, "") === baseStem;
+  });
+  return siblings.length > 0 ? `${routeName}-1` : routeName;
+}
+
 async function refreshInstances() {
   try {
     const { data, gpus } = await api("/v1/instances");
@@ -1176,7 +1195,7 @@ async function refreshInstances() {
             ${testBtn}
             ${speedTestBtn}
             ${drainBtn}
-            <button class="icon-btn icon-copy" data-action="copy-model" data-id="${inst.id}" data-copy="${inst.modelRouteName || inst.effectiveModel}" title="Copy Model ID (unique route name for use with /v1/chat/completions)">&#x1F4CB;</button>
+            <button class="icon-btn icon-copy" data-action="copy-model" data-id="${inst.id}" data-copy="${resolveDisplayRouteName(inst, data)}" title="Copy Model ID (unique route name for use with /v1/chat/completions)">&#x1F4CB;</button>
             <button class="icon-btn icon-clone" data-action="clone" data-id="${inst.id}" title="Clone Setup">&#x2398;</button>
           </div>
         </td>
@@ -1300,9 +1319,8 @@ function renderRouteGroupHtml(baseStem, members) {
       const gpus = Array.isArray(inst.gpus) ? inst.gpus.join(", ") : "-";
       const state = String(inst.state || "unknown").toLowerCase();
       const isBase = routeName === baseStem;
-      const pinSection = isBase
-        ? `<div class="route-inst-pin"><span class="route-inst-badge-pool" title="Covered by the pool entry above — use the base name to include this in round-robin">in pool</span></div>`
-        : `<div class="route-inst-pin"><code class="route-inst-pin-name" title="Pin to this GPU: ${escapeHtml(routeName)}">${escapeHtml(routeName)}</code><button class="icon-btn route-copy-mini" data-route-copy="${escapeHtml(routeName)}" title="Copy pinned name to always target this GPU">&#x2398;</button></div>`;
+      const pinnedName = isBase ? `${baseStem}-1` : routeName;
+      const pinSection = `<div class="route-inst-pin"><code class="route-inst-pin-name" title="Pin to this GPU: ${escapeHtml(pinnedName)}">${escapeHtml(pinnedName)}</code><button class="icon-btn route-copy-mini" data-route-copy="${escapeHtml(pinnedName)}" title="Copy pinned name to always target this GPU">&#x2398;</button></div>`;
       return `<div class="route-inst-card">
           <div class="route-inst-card-top">
             <span class="state-dot state-${state}"></span>
@@ -1318,7 +1336,7 @@ function renderRouteGroupHtml(baseStem, members) {
           <span class="route-group-icon route-icon-pool" title="Round-robin pool: each request cycles to the next available instance">&#x21C4;</span>
           <span class="route-group-name">${escapeHtml(baseStem)}</span>
           <span class="route-group-badge">round-robin &middot; ${members.length} instances</span>
-          <button class="icon-btn route-copy-btn" data-route-copy="${escapeHtml(baseStem)}" title="Copy pool model name for use in any OpenAI client">&#x1F4CB; Copy</button>
+          <button class="route-copy-btn" data-route-copy="${escapeHtml(baseStem)}" title="Copy model name">Copy</button>
         </div>
         <div class="route-group-tip">
           &#x1F4A1; Send <code>${escapeHtml(baseStem)}</code> as the model name to automatically spread load across all ${members.length} GPUs.
@@ -1335,7 +1353,7 @@ function renderRouteGroupHtml(baseStem, members) {
           <span class="route-group-icon route-icon-solo" title="Direct routing: all requests go to this single instance">&#x2192;</span>
           <span class="route-group-name">${escapeHtml(routeName)}</span>
           <span class="route-group-badge route-group-badge-solo">direct &middot; GPU ${escapeHtml(gpus)}</span>
-          <button class="icon-btn route-copy-btn" data-route-copy="${escapeHtml(routeName)}" title="Copy model name for use in any OpenAI client">&#x1F4CB; Copy</button>
+          <button class="route-copy-btn" data-route-copy="${escapeHtml(routeName)}" title="Copy model name">Copy</button>
         </div>
         <div class="route-inst-row">
           <div class="route-inst-card">
