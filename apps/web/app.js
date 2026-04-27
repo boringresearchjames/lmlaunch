@@ -1955,7 +1955,11 @@ function renderDownloads(jobs) {
     if (j.status === "downloading" || j.status === "pending") {
       actions = `<button class="hub-dl-cancel" onclick="abortDownload(${JSON.stringify(j.id)})">&#x23F8; Pause</button>`;
     } else if (j.status === "paused") {
-      actions = `<button class="hub-dl-resume" onclick="resumeDownload(${JSON.stringify(j.repoId)},${JSON.stringify(j.filename)})">&#x25B6; Resume</button>`;
+      actions = `<button class="hub-dl-resume" onclick="resumeDownload(${JSON.stringify(j.repoId)},${JSON.stringify(j.filename)})">&#x25B6; Resume</button>
+               <button class="hub-dl-discard" onclick="discardDownload(${JSON.stringify(j.id)},${JSON.stringify(j.partPath || '')})">&#x1F5D1; Discard</button>`;
+    } else if (j.status === "error") {
+      actions = `<button class="hub-dl-resume" onclick="resumeDownload(${JSON.stringify(j.repoId)},${JSON.stringify(j.filename)})">&#x25B6; Retry</button>
+               <button class="hub-dl-discard" onclick="discardDownload(${JSON.stringify(j.id)},${JSON.stringify(j.partPath || '')})">&#x1F5D1; Discard</button>`;
     }
     const metaStr = j.totalBytes
       ? `${fmtBytes(j.bytesReceived)} / ${fmtBytes(j.totalBytes)}`
@@ -2038,6 +2042,15 @@ async function abortDownload(jobId) {
 
 async function resumeDownload(repoId, filename) {
   await startDownload(repoId, filename);
+}
+
+async function discardDownload(jobId) {
+  try {
+    await api(`/v1/hub/downloads/${encodeURIComponent(jobId)}/discard`, { method: "DELETE" });
+    pollDownloads();
+  } catch (err) {
+    alert("Discard failed: " + err.message);
+  }
 }
 
 // ── Clear completed downloads ────────────────────────────────────────────────

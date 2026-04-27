@@ -248,16 +248,20 @@
     </div><!-- #pageInstances -->
 
     <div id="pageModels" class="layout" hidden>
-      <!-- HF Token settings strip -->
-      <div class="hub-settings-strip">
-        <span class="hub-settings-label">HuggingFace Token</span>
-        <input id="hfTokenInput" type="password" class="hub-token-input" placeholder="hf_… (optional, for gated models)" autocomplete="off" />
-        <button id="hfTokenSave" class="hub-token-save" type="button">Save</button>
-        <span id="hfTokenStatus" class="hub-token-status"></span>
-      </div>
+      <!-- HF Token card + Favorites side by side -->
+      <section class="card span-6" id="hubTokenCard">
+        <div class="section-header">
+          <div><h2>🔑 HuggingFace Token</h2><p class="card-subtitle">Required for gated models. Stored locally in your browser.</p></div>
+        </div>
+        <div class="hub-settings-strip">
+          <input id="hfTokenInput" type="password" class="hub-token-input" placeholder="hf_… (optional, for gated models)" autocomplete="off" />
+          <button id="hfTokenSave" class="hub-token-save" type="button">Save</button>
+          <span id="hfTokenStatus" class="hub-token-status"></span>
+        </div>
+      </section>
 
       <!-- Favorites -->
-      <section class="card span-12" id="hubFavoritesCard">
+      <section class="card span-6" id="hubFavoritesCard">
         <div class="section-header">
           <div><h2>⭐ Favorites</h2><p class="card-subtitle">Pinned models — click Launch to pre-fill the instance launcher.</p></div>
         </div>

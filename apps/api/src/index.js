@@ -2537,14 +2537,19 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
         job.totalBytes = contentLength ? resumedFrom + Number(contentLength) : null;
 
         const fileHandle = fs.createWriteStream(partPath, { flags: resumedFrom > 0 ? "a" : "w" });
-        const reader = dlRes.body.getReader();
+        // Capture stream errors so they don't crash the process as unhandled events
+        let streamErr = null;
+        fileHandle.on("error", (err) => { streamErr = err; });
 
+        const reader = dlRes.body.getReader();
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (streamErr) throw streamErr;
           fileHandle.write(value);
           job.bytesReceived += value.length;
         }
+        if (streamErr) throw streamErr;
         fileHandle.close();
 
         // Rename .part → final
@@ -2588,6 +2593,18 @@ app.delete("/v1/hub/downloads/:id", requireAdminToken, (req, res) => {
     job.abortController.abort();
   }
   res.json({ ok: true, id: job.id, partKept: true });
+});
+
+// DELETE /v1/hub/downloads/:id/discard  — remove job and delete .part file
+app.delete("/v1/hub/downloads/:id/discard", requireAdminToken, (req, res) => {
+  const job = hubDownloadJobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (job.status === "downloading" || job.status === "pending") {
+    job.abortController.abort();
+  }
+  try { fs.unlinkSync(job.partPath); } catch { /* already gone */ }
+  hubDownloadJobs.delete(job.id);
+  res.json({ ok: true, id: job.id });
 });
 
 // ── End HuggingFace Hub proxy ────────────────────────────────────────────────
