@@ -2065,15 +2065,64 @@ app.post("/v1/instances/:id/model", (req, res) => {
 
 app.get("/v1/models", (_req, res) => {
   const running = state.instances.filter((x) => x.state !== "stopped" && !x.drain);
-  const data = running.map((inst) => ({
-    id: resolveModelName(inst.effectiveModel) || inst.effectiveModel || inst.id,
-    object: "model",
-    created: Math.floor((inst.startedAt ? new Date(inst.startedAt).getTime() : Date.now()) / 1000),
-    owned_by: "llamafleet",
-    instance_id: inst.id,
-    profile_name: inst.profileName,
-    effective_model: inst.effectiveModel
-  }));
+
+  // Group by base stem (strip trailing -N suffix from modelRouteName)
+  const groups = new Map(); // baseStem -> inst[]
+  for (const inst of running) {
+    const routeName = inst.modelRouteName || resolveModelName(inst.effectiveModel) || inst.effectiveModel || inst.id;
+    const baseStem = routeName.replace(/-\d+$/, "");
+    if (!groups.has(baseStem)) groups.set(baseStem, []);
+    groups.get(baseStem).push({ inst, routeName });
+  }
+
+  const data = [];
+  for (const [baseStem, members] of groups) {
+    if (members.length === 1) {
+      // Solo instance — one entry, acts as both pool and individual
+      const { inst, routeName } = members[0];
+      data.push({
+        id: routeName,
+        object: "model",
+        created: Math.floor((inst.startedAt ? new Date(inst.startedAt).getTime() : Date.now()) / 1000),
+        owned_by: "llamafleet",
+        instance_id: inst.id,
+        profile_name: inst.profileName,
+        effective_model: inst.effectiveModel,
+        pool: false,
+        instance_count: 1
+      });
+    } else {
+      // Multiple instances — emit one pool entry + individual entries for variants
+      const first = members[0];
+      data.push({
+        id: baseStem,
+        object: "model",
+        created: Math.floor((first.inst.startedAt ? new Date(first.inst.startedAt).getTime() : Date.now()) / 1000),
+        owned_by: "llamafleet",
+        instance_id: null,
+        profile_name: first.inst.profileName,
+        effective_model: first.inst.effectiveModel,
+        pool: true,
+        instance_count: members.length
+      });
+      // Individual pinned entries for all except the one whose routeName === baseStem
+      for (const { inst, routeName } of members) {
+        if (routeName === baseStem) continue; // covered by pool entry above
+        data.push({
+          id: routeName,
+          object: "model",
+          created: Math.floor((inst.startedAt ? new Date(inst.startedAt).getTime() : Date.now()) / 1000),
+          owned_by: "llamafleet",
+          instance_id: inst.id,
+          profile_name: inst.profileName,
+          effective_model: inst.effectiveModel,
+          pool: false,
+          instance_count: 1
+        });
+      }
+    }
+  }
+
   res.json({ object: "list", data });
 });
 
