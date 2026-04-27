@@ -75,6 +75,9 @@ body {
   z-index: 1;
 }
 
+/* Ensure the HTML `hidden` attribute always wins over display rules like grid/flex */
+[hidden] { display: none !important; }
+
 .topbar {
   max-width: 1420px;
   margin: 0 auto;
