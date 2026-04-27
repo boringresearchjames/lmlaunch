@@ -22,7 +22,7 @@ Every instance is reachable through a single **OpenAI-compatible API** at `http:
 - Log viewer with auto-tail and clone-setup action per instance
 - Model Routing dashboard section — visual overview of which instances form a round-robin pool vs. solo routes, with one-click copy of each pinned model name
 
-LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio required. Works on NVIDIA (including pre-Ampere V100/10xx/20xx), AMD, and CPU.
+LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio or Ollama required. Works on NVIDIA (including pre-Ampere V100/10xx/20xx), AMD, and CPU.
 
 ## Dashboard
 
