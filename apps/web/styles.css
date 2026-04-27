@@ -1910,6 +1910,14 @@ pre {
 
 .hub-search-input {
   flex: 1;
+  min-width: 0;
+}
+
+.hub-search-btn {
+  flex-shrink: 0;
+  width: auto;
+  padding: 0 24px;
+  white-space: nowrap;
 }
 
 .hub-filter-pills {
