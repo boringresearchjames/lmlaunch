@@ -1843,6 +1843,65 @@ app.post("/v1/instances/start", async (req, res) => {
   }
 });
 
+app.post("/v1/instances/:id/restart", async (req, res) => {
+  const instance = state.instances.find((x) => x.id === req.params.id);
+  if (!instance) return res.status(404).json({ error: "instance not found" });
+
+  if (instance.state !== "stopped" && instance.state !== "unhealthy") {
+    return res.status(409).json({ error: "instance must be stopped or unhealthy to restart" });
+  }
+
+  const profile = {
+    id: null,
+    name: instance.profileName || instance.id,
+    runtime: cleanRuntime(instance.runtime),
+    host: instance.host || "127.0.0.1",
+    bindHost: instance.bindHost || instance.host || "127.0.0.1",
+    port: instance.port,
+    gpus: Array.isArray(instance.gpus) ? instance.gpus : [],
+    contextLength: parseContextLength(instance.contextLength),
+    startupTimeoutMs: 180000,
+    queueLimit: instance.queueLimit || 64,
+    modelTtlSeconds: instance.modelTtlSeconds || null,
+    modelParallel: instance.modelParallel || null,
+    restartPolicy: instance.restartPolicy || { mode: "never" }
+  };
+
+  instance.state = "starting";
+  instance.lastError = null;
+  instance.pid = null;
+  instance.inflightRequests = 0;
+  instance.queueDepth = 0;
+  instance.lastHealthOkAt = null;
+  instance.startedAt = now();
+  instance.updatedAt = now();
+  saveState(state);
+
+  try {
+    const launch = await bridgeFetch("POST", "/v1/instances/start", {
+      instanceId: instance.id,
+      profile: {
+        ...profile,
+        model: instance.effectiveModel,
+        maxInflightRequests: instance.maxInflightRequests || 4
+      }
+    });
+
+    instance.state = launch.state || "starting";
+    instance.pid = launch.pid || null;
+    instance.updatedAt = now();
+    saveState(state);
+    audit("instance.restart", { instanceId: instance.id });
+    res.json(instance);
+  } catch (error) {
+    instance.state = "stopped";
+    instance.lastError = String(error.message || error);
+    instance.updatedAt = now();
+    saveState(state);
+    res.status(502).json({ error: String(error.message || error) });
+  }
+});
+
 app.post("/v1/instances/:id/stop", async (req, res) => {
   const instance = state.instances.find((x) => x.id === req.params.id);
   if (!instance) return res.status(404).json({ error: "instance not found" });

@@ -870,6 +870,17 @@ tbody tr:hover td {
   border-color: rgba(120, 160, 255, 0.7);
 }
 
+.icon-wake {
+  background: rgba(60, 200, 100, 0.18);
+  border-color: rgba(80, 220, 120, 0.4);
+  color: #5de68a;
+}
+
+.icon-wake:hover {
+  background: rgba(60, 200, 100, 0.38);
+  border-color: rgba(80, 220, 120, 0.75);
+}
+
 .icon-speed {
   background: rgba(255, 200, 40, 0.12);
   border-color: rgba(255, 200, 40, 0.3);

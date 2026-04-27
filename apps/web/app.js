@@ -1141,11 +1141,14 @@ async function refreshInstances() {
       const runtimeBackend = normalizeRuntimeBackend(inst.runtime?.hardware || "auto");
       const runtimeLabel = runtimeBackend;
       const isStopped = String(inst.state || "").toLowerCase() === "stopped";
+      const isUnhealthy = String(inst.state || "").toLowerCase() === "unhealthy";
+      const canWake = isStopped || isUnhealthy;
       const drainTitle = inst.drain ? "Resume Intake" : "Pause Intake";
       const drainIcon = inst.drain ? "\u25b6" : "\u23f8";
-      const drainBtn = isStopped ? "" : `<button class="icon-btn icon-drain" data-action="drain" data-id="${inst.id}" data-enabled="${inst.drain ? "false" : "true"}" title="${drainTitle}">${drainIcon}</button>`;
-      const testBtn = isStopped ? "" : `<button class="icon-btn icon-test" data-action="test" data-id="${inst.id}" title="Test Prompt">&#x1F4AC;</button>`;
-      const speedTestBtn = isStopped ? "" : `<button class="icon-btn icon-speed" data-action="speed-test" data-id="${inst.id}" title="Speed Test (TPS)">&#x26A1;</button>`;
+      const wakeBtn = canWake ? `<button class="icon-btn icon-wake" data-action="wake" data-id="${inst.id}" title="Wake / Restart Instance">&#x25B6;</button>` : "";
+      const drainBtn = canWake ? "" : `<button class="icon-btn icon-drain" data-action="drain" data-id="${inst.id}" data-enabled="${inst.drain ? "false" : "true"}" title="${drainTitle}">${drainIcon}</button>`;
+      const testBtn = canWake ? "" : `<button class="icon-btn icon-test" data-action="test" data-id="${inst.id}" title="Test Prompt">&#x1F4AC;</button>`;
+      const speedTestBtn = canWake ? "" : `<button class="icon-btn icon-speed" data-action="speed-test" data-id="${inst.id}" title="Speed Test (TPS)">&#x26A1;</button>`;
       const deleteTitle = isStopped ? "Delete Instance" : "Remove Instance";
       const deleteBtn = `<button class="icon-btn icon-delete" data-action="delete" data-id="${inst.id}" title="${deleteTitle}">&#x1F5D1;</button>`;
 
@@ -1169,6 +1172,7 @@ async function refreshInstances() {
         <td class="actions-cell">
           <div class="icon-toolbar">
             ${deleteBtn}
+            ${wakeBtn}
             ${testBtn}
             ${speedTestBtn}
             ${drainBtn}
@@ -1211,7 +1215,9 @@ async function refreshInstances() {
         const id = btn.getAttribute("data-id");
         const action = btn.getAttribute("data-action");
         try {
-          if (action === "drain") {
+          if (action === "wake") {
+            await api(`/v1/instances/${id}/restart`, { method: "POST" });
+          } else if (action === "drain") {
             const enable = btn.getAttribute("data-enabled") === "true";
             await api(`/v1/instances/${id}/drain`, {
               method: "POST",
