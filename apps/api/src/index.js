@@ -2505,6 +2505,7 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
     fs.mkdirSync(destDir, { recursive: true });
     const destPath = path.join(destDir, safeFilename);
     const partPath = destPath + ".part";
+    const metaPath = partPath + ".meta.json";
 
     // Check if already running for same file
     for (const job of hubDownloadJobs.values()) {
@@ -2521,11 +2522,13 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
 
     const jobId = crypto.randomUUID();
     const job = {
-      id: jobId, repoId, filename: safeFilename, destPath, partPath,
+      id: jobId, repoId, filename: safeFilename, destPath, partPath, metaPath,
       bytesReceived: resumedFrom, totalBytes: null, resumedFrom,
       status: "pending", error: null, abortController: new AbortController(),
       bytesPerSec: null, _rateAt: Date.now(), _rateBytes: resumedFrom,
     };
+    // Write sidecar so this job can be restored after a restart
+    try { fs.writeFileSync(metaPath, JSON.stringify({ repoId, filename: safeFilename })); } catch { /* non-fatal */ }
     hubDownloadJobs.set(jobId, job);
 
     // Start download async (don't await)
@@ -2557,8 +2560,18 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
         fileHandle.on("error", (err) => { streamErr = err; });
 
         const reader = dlRes.body.getReader();
+        // Ensure reader is cancelled if abort is triggered (Node fetch doesn't always throw
+        // AbortError on reader.read() reliably — explicitly cancel the reader on abort).
+        job.abortController.signal.addEventListener("abort", () => reader.cancel().catch(() => {}), { once: true });
+
         while (true) {
           const { done, value } = await reader.read();
+          // Check abort signal after every read — reader.cancel() resolves with done:true
+          if (job.abortController.signal.aborted) {
+            const e = new Error("Paused");
+            e.name = "AbortError";
+            throw e;
+          }
           if (done) break;
           if (streamErr) throw streamErr;
           // Honour backpressure: if the write buffer is full, wait for drain before continuing
@@ -2577,7 +2590,8 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
         // fileHandle.end() flushes all pending writes and closes the stream; close() does not wait.
         await new Promise((resolve, reject) => fileHandle.end((err) => (err ? reject(err) : resolve())));
 
-        // Rename .part → final
+        // Rename .part → final and clean up sidecar
+        try { fs.unlinkSync(metaPath); } catch { /* already gone */ }
         fs.renameSync(partPath, destPath);
         job.status = "done";
       } catch (err) {
@@ -2641,6 +2655,7 @@ app.delete("/v1/hub/downloads/:id/discard", requireAdminToken, (req, res) => {
     job.abortController.abort();
   }
   try { fs.unlinkSync(job.partPath); } catch { /* already gone */ }
+  try { fs.unlinkSync(job.metaPath); } catch { /* already gone */ }
   hubDownloadJobs.delete(job.id);
   res.json({ ok: true, id: job.id });
 });
@@ -2921,6 +2936,38 @@ async function pollInstanceHealth() {
 }
 
 setInterval(() => { void pollInstanceHealth(); }, HEALTH_POLL_INTERVAL_MS);
+
+// Restore any downloads that were in-progress (or paused) when the process was last stopped.
+// Each active download writes a .meta.json sidecar alongside its .part file; we scan for those now.
+(function restorePartialDownloads() {
+  const home = os.homedir();
+  const dir = path.resolve(modelsDir.replace(/^~/, home));
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return; }
+  for (const name of entries) {
+    if (!name.endsWith(".gguf.part")) continue;
+    const partPath = path.join(dir, name);
+    const metaPath = partPath + ".meta.json";
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(metaPath, "utf8")); } catch { continue; }
+    if (!meta.repoId || !meta.filename) continue;
+    // Skip if a job for this file is already registered (shouldn't happen at startup, but be safe)
+    const destPath = partPath.slice(0, -5); // strip ".part"
+    const alreadyTracked = [...hubDownloadJobs.values()].some((j) => j.destPath === destPath);
+    if (alreadyTracked) continue;
+    let size = 0;
+    try { size = fs.statSync(partPath).size; } catch { /* ignore */ }
+    const jobId = crypto.randomUUID();
+    hubDownloadJobs.set(jobId, {
+      id: jobId, repoId: meta.repoId, filename: meta.filename,
+      destPath, partPath, metaPath,
+      bytesReceived: size, totalBytes: null, resumedFrom: size,
+      status: "paused", error: null, abortController: new AbortController(),
+      bytesPerSec: null, _rateAt: Date.now(), _rateBytes: size,
+    });
+    console.log(`Restored paused download: ${meta.repoId}/${meta.filename} (${size} bytes)`);
+  }
+})();
 
 app.listen(port, () => {
   console.log(`lmlaunch api+web listening on ${port}`);
