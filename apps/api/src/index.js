@@ -2533,6 +2533,8 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
 
     // Start download async (don't await)
     (async () => {
+      let fileHandle = null;
+      let reader = null;
       try {
         job.status = "downloading";
         const dlUrl = `${HF_API}/${repoId}/resolve/main/${encodeURIComponent(safeFilename)}?download=true`;
@@ -2554,47 +2556,60 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
         // For 206 Partial Content, content-length is remaining bytes; add resumedFrom for total.
         job.totalBytes = contentLength ? resumedFrom + Number(contentLength) : null;
 
-        const fileHandle = fs.createWriteStream(partPath, { flags: resumedFrom > 0 ? "a" : "w" });
+        fileHandle = fs.createWriteStream(partPath, { flags: resumedFrom > 0 ? "a" : "w" });
         // Capture stream errors so they don't crash the process as unhandled events
         let streamErr = null;
         fileHandle.on("error", (err) => { streamErr = err; });
 
-        const reader = dlRes.body.getReader();
-        // Ensure reader is cancelled if abort is triggered (Node fetch doesn't always throw
-        // AbortError on reader.read() reliably — explicitly cancel the reader on abort).
-        job.abortController.signal.addEventListener("abort", () => reader.cancel().catch(() => {}), { once: true });
+        reader = dlRes.body.getReader();
+        // Build a promise that rejects immediately when abort is signalled — this races against
+        // each reader.read() so we don't have to wait for the next chunk to arrive before
+        // noticing a pause request (reader.cancel() alone only unblocks the *next* read call).
+        let abortReject;
+        const abortRace = new Promise((_, reject) => { abortReject = reject; });
+        const onAbort = () => {
+          reader.cancel().catch(() => {});
+          const e = new Error("Paused");
+          e.name = "AbortError";
+          abortReject(e);
+        };
+        job.abortController.signal.addEventListener("abort", onAbort, { once: true });
 
-        while (true) {
-          const { done, value } = await reader.read();
-          // Check abort signal after every read — reader.cancel() resolves with done:true
-          if (job.abortController.signal.aborted) {
-            const e = new Error("Paused");
-            e.name = "AbortError";
-            throw e;
+        try {
+          while (true) {
+            const { done, value } = await Promise.race([reader.read(), abortRace]);
+            if (done) break;
+            if (streamErr) throw streamErr;
+            // Honour backpressure: if the write buffer is full, wait for drain before continuing
+            const canContinue = fileHandle.write(value);
+            job.bytesReceived += value.length;
+            const rateNow = Date.now();
+            const rateElapsed = (rateNow - job._rateAt) / 1000;
+            if (rateElapsed >= 1.0) {
+              job.bytesPerSec = Math.round((job.bytesReceived - job._rateBytes) / rateElapsed);
+              job._rateAt = rateNow;
+              job._rateBytes = job.bytesReceived;
+            }
+            if (!canContinue) await new Promise((resolve) => fileHandle.once("drain", resolve));
           }
-          if (done) break;
-          if (streamErr) throw streamErr;
-          // Honour backpressure: if the write buffer is full, wait for drain before continuing
-          const canContinue = fileHandle.write(value);
-          job.bytesReceived += value.length;
-          const rateNow = Date.now();
-          const rateElapsed = (rateNow - job._rateAt) / 1000;
-          if (rateElapsed >= 1.0) {
-            job.bytesPerSec = Math.round((job.bytesReceived - job._rateBytes) / rateElapsed);
-            job._rateAt = rateNow;
-            job._rateBytes = job.bytesReceived;
-          }
-          if (!canContinue) await new Promise((resolve) => fileHandle.once("drain", resolve));
+        } finally {
+          job.abortController.signal.removeEventListener("abort", onAbort);
         }
         if (streamErr) throw streamErr;
         // fileHandle.end() flushes all pending writes and closes the stream; close() does not wait.
         await new Promise((resolve, reject) => fileHandle.end((err) => (err ? reject(err) : resolve())));
+        fileHandle = null;
 
         // Rename .part → final and clean up sidecar
         try { fs.unlinkSync(metaPath); } catch { /* already gone */ }
         fs.renameSync(partPath, destPath);
         job.status = "done";
       } catch (err) {
+        // Always close the write stream cleanly so the .part file is flushed to disk
+        if (fileHandle && !fileHandle.destroyed) {
+          try { await new Promise((resolve) => fileHandle.end(resolve)); } catch { fileHandle.destroy(); }
+        }
+        if (reader) { try { reader.cancel().catch(() => {}); } catch { /* ignore */ } }
         if (err.name === "AbortError") {
           job.status = "paused";
         } else {
