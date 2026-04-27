@@ -1841,6 +1841,14 @@ function fmtBytes(n) {
   return (n / 1e3).toFixed(0) + " KB";
 }
 
+function fmtRate(bps) {
+  if (!bps) return "";
+  if (bps >= 1e9) return (bps / 1e9).toFixed(1) + " GB/s";
+  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + " MB/s";
+  if (bps >= 1e3) return (bps / 1e3).toFixed(0) + " KB/s";
+  return bps + " B/s";
+}
+
 function fmtNum(n) {
   if (!n) return "0";
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -1964,10 +1972,13 @@ function renderDownloads(jobs) {
     const metaStr = j.totalBytes
       ? `${fmtBytes(j.bytesReceived)} / ${fmtBytes(j.totalBytes)}`
       : fmtBytes(j.bytesReceived);
+    const rateStr = j.bytesPerSec ? ` · ${fmtRate(j.bytesPerSec)}` : "";
+    const etaSec = j.bytesPerSec && j.totalBytes ? Math.round((j.totalBytes - j.bytesReceived) / j.bytesPerSec) : null;
+    const etaStr = etaSec != null && etaSec > 0 ? ` (${etaSec < 60 ? etaSec + "s" : etaSec < 3600 ? Math.round(etaSec / 60) + "m" : Math.floor(etaSec / 3600) + "h " + Math.round((etaSec % 3600) / 60) + "m"})` : "";
     return `
       <div class="hub-dl-row" id="dlrow-${j.id}">
         <span class="hub-dl-name" title="${j.repoId}/${j.filename}">${j.filename}</span>
-        <span class="hub-dl-meta ${statusClass}">${j.status.toUpperCase()}${pct != null ? "  " + pct + "%" : ""}</span>
+        <span class="hub-dl-meta ${statusClass}">${j.status.toUpperCase()}${pct != null ? "  " + pct + "%" : ""}${rateStr}${etaStr}</span>
         <div class="hub-dl-bar-wrap"><div class="hub-dl-bar-fill" style="width:${barPct}%"></div></div>
         <span class="hub-dl-meta">${metaStr}</span>
         ${actions}
@@ -2011,7 +2022,7 @@ function updateInlineProgress(job) {
   el.innerHTML = `
     <div class="hub-inline-progress">
       <div class="hub-inline-bar-wrap"><div class="hub-inline-bar-fill" style="width:${pct}%"></div></div>
-      <span>${pct}%</span>
+      <span>${pct}%${job.bytesPerSec ? " · " + fmtRate(job.bytesPerSec) : ""}</span>
     </div>`;
 }
 

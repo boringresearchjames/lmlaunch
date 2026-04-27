@@ -2439,7 +2439,7 @@ app.get("/v1/hub/repo/files", requireAdminToken, async (req, res) => {
     const siblings = (model.siblings || []).filter((s) => s.rfilename && s.rfilename.toLowerCase().endsWith(".gguf"));
     const files = siblings.map((s) => {
       const { tier, label } = parseQuantTier(s.rfilename);
-      return { filename: s.rfilename, size: s.size || s.lfs?.size || null, quantLabel: label, quantTier: tier };
+      return { filename: s.rfilename, size: s.lfs?.size || s.size || null, quantLabel: label, quantTier: tier };
     });
     // Sort: recommended first, then balanced, quality, imatrix, large, other
     const tierOrder = { recommended: 0, balanced: 1, quality: 2, imatrix: 3, large: 4, other: 5 };
@@ -2524,6 +2524,7 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
       id: jobId, repoId, filename: safeFilename, destPath, partPath,
       bytesReceived: resumedFrom, totalBytes: null, resumedFrom,
       status: "pending", error: null, abortController: new AbortController(),
+      bytesPerSec: null, _rateAt: Date.now(), _rateBytes: resumedFrom,
     };
     hubDownloadJobs.set(jobId, job);
 
@@ -2563,6 +2564,13 @@ app.post("/v1/hub/download", requireAdminToken, async (req, res) => {
           // Honour backpressure: if the write buffer is full, wait for drain before continuing
           const canContinue = fileHandle.write(value);
           job.bytesReceived += value.length;
+          const rateNow = Date.now();
+          const rateElapsed = (rateNow - job._rateAt) / 1000;
+          if (rateElapsed >= 1.0) {
+            job.bytesPerSec = Math.round((job.bytesReceived - job._rateBytes) / rateElapsed);
+            job._rateAt = rateNow;
+            job._rateBytes = job.bytesReceived;
+          }
           if (!canContinue) await new Promise((resolve) => fileHandle.once("drain", resolve));
         }
         if (streamErr) throw streamErr;
@@ -2609,6 +2617,7 @@ app.get("/v1/hub/downloads", requireAdminToken, (_req, res) => {
       id: job.id, repoId: job.repoId, filename: job.filename,
       bytesReceived: job.bytesReceived, totalBytes: job.totalBytes,
       resumedFrom: job.resumedFrom, status: job.status, pct, error: job.error,
+      bytesPerSec: job.status === "downloading" ? job.bytesPerSec : null,
     });
   }
   res.json({ data: jobs });
