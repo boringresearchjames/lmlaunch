@@ -42,7 +42,18 @@ router.get("/local-models", (_req, res) => {
         const name = tagPrefix ? `[${tagPrefix}] ${rel}` : rel;
         const shards = shardMatch ? parseInt(shardMatch[2], 10) : null;
         let size = null;
-        try { size = fs.statSync(fullPath).size; } catch { /* ignore */ }
+        try {
+          if (shards) {
+            let total = 0;
+            for (let i = 1; i <= shards; i++) {
+              const shardPath = fullPath.replace(/-\d{5}-of-/i, `-${String(i).padStart(5, "0")}-of-`);
+              try { total += fs.statSync(shardPath).size; } catch { /* skip missing shard */ }
+            }
+            size = total || null;
+          } else {
+            size = fs.statSync(fullPath).size;
+          }
+        } catch { /* ignore */ }
         results.push({ id: fullPath, name, shards, size });
       }
     }
