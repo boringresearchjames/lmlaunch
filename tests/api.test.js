@@ -139,6 +139,99 @@ describe("DELETE /v1/profiles/:id", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Security headers
+// ---------------------------------------------------------------------------
+
+describe("security headers", () => {
+  it("includes X-Content-Type-Options: nosniff on all responses", async () => {
+    const res = await fetch(`${testBase}/health`);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("includes X-Frame-Options: DENY on all responses", async () => {
+    const res = await fetch(`${testBase}/health`);
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("includes Access-Control-Allow-Origin on authenticated responses", async () => {
+    const res = await fetch(`${testBase}/v1/instances`, { headers: auth });
+    expect(res.headers.get("access-control-allow-origin")).toBeTruthy();
+  });
+
+  it("Referrer-Policy is set", async () => {
+    const res = await fetch(`${testBase}/health`);
+    expect(res.headers.get("referrer-policy")).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 404 on unknown routes
+// ---------------------------------------------------------------------------
+
+describe("unknown routes", () => {
+  it("returns 404 for unrecognised /v1 path", async () => {
+    const res = await fetch(`${testBase}/v1/does-not-exist`, { headers: auth });
+    expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/models
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/models", () => {
+  it("returns OpenAI list shape with empty data when no instances are running", async () => {
+    const res = await fetch(`${testBase}/v1/models`, { headers: auth });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.object).toBe("list");
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/chat/completions — routing errors (no live instances needed)
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/chat/completions routing errors", () => {
+  it("returns 400 when model field is absent", async () => {
+    const res = await fetch(`${testBase}/v1/chat/completions`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.param).toBe("model");
+  });
+
+  it("returns 404 with model_not_found code for an unknown model name", async () => {
+    const res = await fetch(`${testBase}/v1/chat/completions`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ model: "nonexistent-model-xyz", messages: [] }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe("model_not_found");
+  });
+});
+
+describe("POST /v1/completions routing errors", () => {
+  it("returns 404 with model_not_found code for an unknown model name", async () => {
+    const res = await fetch(`${testBase}/v1/completions`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ model: "nonexistent-model-xyz", prompt: "hello" }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.code).toBe("model_not_found");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Hub downloads
 // ---------------------------------------------------------------------------
 
@@ -148,6 +241,58 @@ describe("GET /v1/hub/downloads", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body.data)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/audit", () => {
+  it("returns 200 with a data array", async () => {
+    const res = await fetch(`${testBase}/v1/audit`, { headers: auth });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.data)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent capabilities
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/agent/capabilities", () => {
+  it("returns version and actions manifest", async () => {
+    const res = await fetch(`${testBase}/v1/agent/capabilities`, { headers: auth });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.version).toBe("1.0");
+    expect(Array.isArray(body.actions)).toBe(true);
+    expect(body.actions.length).toBeGreaterThan(0);
+  });
+});
+
+describe("POST /v1/agent/action", () => {
+  it("returns 400 with success=false for an unrecognised action", async () => {
+    const res = await fetch(`${testBase}/v1/agent/action`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ action: "does.not.exist" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+  });
+
+  it("returns 400 for invalid instanceId on instance-scoped actions", async () => {
+    const res = await fetch(`${testBase}/v1/agent/action`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ action: "instances.stop", input: { instanceId: "bad id with spaces" } }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
   });
 });
 
