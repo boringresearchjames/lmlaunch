@@ -130,12 +130,32 @@ export async function loadModelList(selectElementId) {
   if (!select) return;
   const currentValue = select.value;
 
+  function fmtSize(bytes) {
+    if (!bytes) return "";
+    if (bytes >= 1e9) return ` — ${(bytes / 1e9).toFixed(1)} GB`;
+    if (bytes >= 1e6) return ` — ${(bytes / 1e6).toFixed(0)} MB`;
+    return ` — ${(bytes / 1e3).toFixed(0)} KB`;
+  }
+
   function applyModels(models, sourceLabel) {
     select.innerHTML = '<option value="">-- Select model --</option>';
     models.forEach((model) => {
       const option = document.createElement("option");
       option.value = model.id;
-      option.textContent = model.name || model.id;
+      // Show just the filename (strip directory path) + size
+      const raw = model.name || model.id;
+      // Extract tag prefix like [ollama] if present
+      const tagMatch = raw.match(/^(\[[^\]]+\]\s*)(.+)$/);
+      let label;
+      if (tagMatch) {
+        const tag = tagMatch[1];
+        const filePart = tagMatch[2].split(/[\/\\]/).pop();
+        label = tag + filePart;
+      } else {
+        label = raw.split(/[\/\\]/).pop();
+      }
+      option.textContent = label + fmtSize(model.size);
+      option.title = model.id; // full path on hover
       select.appendChild(option);
     });
     if (currentValue) select.value = currentValue;

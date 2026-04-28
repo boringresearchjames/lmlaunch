@@ -41,7 +41,9 @@ router.get("/local-models", (_req, res) => {
         const rel = path.relative(baseDir, fullPath);
         const name = tagPrefix ? `[${tagPrefix}] ${rel}` : rel;
         const shards = shardMatch ? parseInt(shardMatch[2], 10) : null;
-        results.push({ id: fullPath, name, shards });
+        let size = null;
+        try { size = fs.statSync(fullPath).size; } catch { /* ignore */ }
+        results.push({ id: fullPath, name, shards, size });
       }
     }
   }
