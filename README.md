@@ -50,10 +50,10 @@ All three tools are built on top of `llama.cpp`, so they share the same hardware
 
 ---
 
-## Dashboard
+## In App Screenshots
 
 <table align="center" width="100%"><tr>
-<td width="50%" align="center" valign="top">
+<td width="50%" align="left" valign="top">
 
 **Instances &amp; Routing**<br/>
 Launch form, running instances with GPU stats, log viewer, and the routing map showing which instances share a round-robin pool.
@@ -61,7 +61,7 @@ Launch form, running instances with GPU stats, log viewer, and the routing map s
 <a href="docs/screenshot-dashboard.png"><img src="docs/screenshot-dashboard.png" width="100%" alt="LlamaFleet dashboard — instances and routing" /></a>
 
 </td>
-<td width="50%" align="center" valign="top">
+<td width="50%" align="left" valign="top">
 
 **Model Hub**<br/>
 Browse and download GGUF models directly from HuggingFace. Tracks active downloads with resume/discard controls and pins favorites for one-click launch.
