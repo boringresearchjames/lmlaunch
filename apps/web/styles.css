@@ -2153,3 +2153,21 @@ pre {
 #pageModels .layout {
   padding-top: 10px;
 }
+
+/* ── Footer ── */
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 28px 36px;
+  color: var(--muted);
+  font-size: 13px;
+  opacity: 0.55;
+  user-select: none;
+}
+
+.site-footer-llama {
+  font-size: 18px;
+  line-height: 1;
+}
