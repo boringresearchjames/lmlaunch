@@ -52,7 +52,11 @@ All three tools are built on top of `llama.cpp`, so they share the same hardware
 
 ## Dashboard
 
-![LlamaFleet dashboard](docs/llamafleet-dashboard-v5.png)
+<p align="center">
+  <a href="docs/screenshot-dashboard.png"><img src="docs/screenshot-dashboard.png" width="48%" alt="LlamaFleet dashboard" /></a>
+  &nbsp;
+  <a href="docs/screenshot-models.png"><img src="docs/screenshot-models.png" width="48%" alt="LlamaFleet models hub" /></a>
+</p>
 
 ---
 
