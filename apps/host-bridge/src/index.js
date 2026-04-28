@@ -1034,6 +1034,26 @@ app.post("/v1/instances/:id/drain", (req, res) => {
   res.json({ success: true, enabled });
 });
 
+app.get("/v1/info", auth, async (_req, res) => {
+  const info = {
+    platform: os.platform(),
+    arch: os.arch(),
+    llamaServerBin: llamaServerBinary,
+    llamaServerVersion: null,
+  };
+  try {
+    await new Promise((resolve) => {
+      execFile(llamaServerBinary, ["--version"], { timeout: 4000 }, (_err, stdout, stderr) => {
+        const raw = (stdout || stderr || "").trim();
+        const match = raw.match(/version:\s*(\S+)/) || raw.match(/build\s+(\d+)/);
+        if (match) info.llamaServerVersion = match[1].slice(0, 80);
+        resolve();
+      });
+    });
+  } catch { /* leave null */ }
+  res.json(info);
+});
+
 app.get("/v1/instances/:id/logs", (req, res) => {
   if (!isValidInstanceId(req.params.id)) return res.status(400).json({ error: "invalid instance id" });
   const lines = Number(req.query.lines || defaultLogLines);

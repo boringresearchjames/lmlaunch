@@ -21,7 +21,7 @@
     <header class="topbar">
       <div class="brand-block">
         <span class="badge">Multi-Instance Orchestrator</span>
-        <h1>Llama<span style="color:var(--accent)">Fleet</span></h1>
+        <h1>Llama<span style="color:var(--accent)">Fleet</span> <span id="topbarVersion" class="topbar-version"></span></h1>
         <p>More llamas, fewer problems &mdash; GPU, CPU, or any mix &mdash; one dashboard &amp; API.</p>
       </div>
       <div class="topbar-actions">
@@ -77,94 +77,84 @@
     </div><!-- #pageModels -->
 
     <div id="pageAbout" class="layout" hidden>
-      <div class="about-page">
 
-        <section class="about-hero">
-          <div class="about-hero-title">Llama<span style="color:var(--accent)">Fleet</span></div>
-          <div id="aboutVersion" class="about-version">v&hellip;</div>
-          <p class="about-tagline">More llamas, fewer problems &mdash; GPU, CPU, or any mix &mdash; one dashboard &amp; API.</p>
-        </section>
+      <section class="card about-card span-6">
+        <h2>Background</h2>
+        <p>LlamaFleet started as a practical fix for running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after model swaps, processes crashed under sustained load, and there was no way to pin a model to specific cards or isolate instances from each other.</p>
+        <p>No existing tool &mdash; GUI or headless &mdash; managed independent <code>llama-server</code> processes per GPU subset from a single control plane. LlamaFleet is that tool.</p>
+        <p>The GPU isolation problem is particularly relevant for pre-Ampere hardware. vLLM and SGLang require CUDA 11+ with Ampere-class features; older V100s and GTX 10/20 series cards either hit capability gaps or produce incorrect results. <code>llama.cpp</code> supports this hardware generation well &mdash; LlamaFleet wraps the operational complexity around it.</p>
+      </section>
 
-        <div class="about-grid">
+      <section class="card about-card span-6">
+        <h2>Links</h2>
+        <ul class="about-links">
+          <li>
+            <a href="https://github.com/boringresearchjames/llamafleet" target="_blank" rel="noopener noreferrer" class="about-link">
+              <span class="about-link-icon">⎇</span>
+              <span>
+                <strong>GitHub Repository</strong>
+                <span class="about-link-sub">Source code, README, and documentation</span>
+              </span>
+            </a>
+          </li>
+          <li>
+            <a href="https://github.com/boringresearchjames/llamafleet/issues/new" target="_blank" rel="noopener noreferrer" class="about-link">
+              <span class="about-link-icon">🐛</span>
+              <span>
+                <strong>File a Bug</strong>
+                <span class="about-link-sub">Open a GitHub Issue</span>
+              </span>
+            </a>
+          </li>
+          <li>
+            <a href="https://github.com/boringresearchjames/llamafleet/releases" target="_blank" rel="noopener noreferrer" class="about-link">
+              <span class="about-link-icon">🏷</span>
+              <span>
+                <strong>Release Notes</strong>
+                <span class="about-link-sub">Changelog and release history</span>
+              </span>
+            </a>
+          </li>
+          <li>
+            <a href="https://github.com/boringresearchjames/llamafleet/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer" class="about-link">
+              <span class="about-link-icon">🔒</span>
+              <span>
+                <strong>Security Policy</strong>
+                <span class="about-link-sub">Deployment guidance and threat model</span>
+              </span>
+            </a>
+          </li>
+          <li>
+            <a id="aboutHelpLink" href="#" target="_blank" rel="noopener noreferrer" class="about-link">
+              <span class="about-link-icon">📖</span>
+              <span>
+                <strong>API Reference</strong>
+                <span class="about-link-sub">Full REST API docs served live at /help</span>
+              </span>
+            </a>
+          </li>
+        </ul>
+      </section>
 
-          <section class="card about-card">
-            <h2>Background</h2>
-            <p>LlamaFleet started as a practical fix for running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after model swaps, processes crashed under sustained load, and there was no way to pin a model to specific cards or isolate instances from each other.</p>
-            <p>No existing tool &mdash; GUI or headless &mdash; managed independent <code>llama-server</code> processes per GPU subset from a single control plane. LlamaFleet is that tool.</p>
-            <p>The GPU isolation problem is particularly relevant for pre-Ampere hardware. vLLM and SGLang require CUDA 11+ with Ampere-class features; older V100s and GTX 10/20 series cards either hit capability gaps or produce incorrect results. <code>llama.cpp</code> supports this hardware generation well &mdash; LlamaFleet wraps the operational complexity around it.</p>
-          </section>
+      <section class="card about-card span-6">
+        <h2>Runtime</h2>
+        <table class="about-deps">
+          <tbody>
+            <tr><td class="about-dep-name">LlamaFleet</td><td id="aboutVerDep" class="about-dep-ver">&mdash;</td></tr>
+            <tr><td class="about-dep-name">Node.js</td><td id="aboutNodeVer" class="about-dep-ver">&mdash;</td></tr>
+            <tr><td class="about-dep-name">llama-server</td><td id="aboutLlamaVer" class="about-dep-ver">&mdash;</td></tr>
+            <tr><td class="about-dep-name">Platform</td><td id="aboutPlatform" class="about-dep-ver">&mdash;</td></tr>
+            <tr><td class="about-dep-name">Architecture</td><td id="aboutArch" class="about-dep-ver">&mdash;</td></tr>
+          </tbody>
+        </table>
+      </section>
 
-          <section class="card about-card">
-            <h2>Links</h2>
-            <ul class="about-links">
-              <li>
-                <a href="https://github.com/boringresearchjames/llamafleet" target="_blank" rel="noopener noreferrer" class="about-link">
-                  <span class="about-link-icon">⎇</span>
-                  <span>
-                    <strong>GitHub Repository</strong>
-                    <span class="about-link-sub">Source code, README, and documentation</span>
-                  </span>
-                </a>
-              </li>
-              <li>
-                <a href="https://github.com/boringresearchjames/llamafleet/issues/new" target="_blank" rel="noopener noreferrer" class="about-link">
-                  <span class="about-link-icon">🐛</span>
-                  <span>
-                    <strong>File a Bug</strong>
-                    <span class="about-link-sub">Open a GitHub Issue</span>
-                  </span>
-                </a>
-              </li>
-              <li>
-                <a href="https://github.com/boringresearchjames/llamafleet/releases" target="_blank" rel="noopener noreferrer" class="about-link">
-                  <span class="about-link-icon">🏷</span>
-                  <span>
-                    <strong>Release Notes</strong>
-                    <span class="about-link-sub">Changelog and release history</span>
-                  </span>
-                </a>
-              </li>
-              <li>
-                <a href="https://github.com/boringresearchjames/llamafleet/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer" class="about-link">
-                  <span class="about-link-icon">🔒</span>
-                  <span>
-                    <strong>Security Policy</strong>
-                    <span class="about-link-sub">Deployment guidance and threat model</span>
-                  </span>
-                </a>
-              </li>
-              <li>
-                <a id="aboutHelpLink" href="#" target="_blank" rel="noopener noreferrer" class="about-link">
-                  <span class="about-link-icon">📖</span>
-                  <span>
-                    <strong>API Reference</strong>
-                    <span class="about-link-sub">Full REST API docs served live at /help</span>
-                  </span>
-                </a>
-              </li>
-            </ul>
-          </section>
+      <section class="card about-card span-6">
+        <h2>License</h2>
+        <p>MIT &mdash; free to use, modify, and distribute. See the <a href="https://github.com/boringresearchjames/llamafleet/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">LICENSE</a> file.</p>
+        <p class="about-muted">LlamaFleet is a single-tenant control plane designed for trusted local networks and homelabs. Do not expose port 8081 to the public internet without a reverse proxy and firewall rules.</p>
+      </section>
 
-          <section class="card about-card">
-            <h2>Runtime</h2>
-            <table class="about-deps">
-              <tbody>
-                <tr><td class="about-dep-name">LlamaFleet</td><td id="aboutVerDep" class="about-dep-ver">&hellip;</td></tr>
-                <tr><td class="about-dep-name">Node.js</td><td id="aboutNodeVer" class="about-dep-ver">&hellip;</td></tr>
-                <tr><td class="about-dep-name">llama-server</td><td id="aboutLlamaVer" class="about-dep-ver">&hellip;</td></tr>
-                <tr><td class="about-dep-name">Platform</td><td id="aboutPlatform" class="about-dep-ver">&hellip;</td></tr>
-              </tbody>
-            </table>
-          </section>
-
-          <section class="card about-card">
-            <h2>License</h2>
-            <p>MIT &mdash; free to use, modify, and distribute. See the <a href="https://github.com/boringresearchjames/llamafleet/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">LICENSE</a> file.</p>
-            <p class="about-muted">LlamaFleet is a single-tenant control plane designed for trusted local networks and homelabs. Do not expose port 8081 to the public internet without a reverse proxy and firewall rules.</p>
-          </section>
-
-        </div>
-      </div>
     </div><!-- #pageAbout -->
 
     <lf-toast id="toast"></lf-toast>

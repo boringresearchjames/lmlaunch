@@ -142,41 +142,43 @@ function initTabs() {
 async function loadAboutInfo() {
   // Only load once — if version is already populated, skip
   const verEl = document.getElementById("aboutVerDep");
-  if (!verEl || verEl.textContent !== "…") return;
+  if (!verEl || verEl.textContent !== "—") return;
+
+  const base = (settings.apiBase || "").replace(/\/$/, "");
+  const authHeaders = settings.token ? { Authorization: `Bearer ${settings.token}` } : {};
 
   try {
-    const health = await fetch(`${(settings.apiBase || "").replace(/\/$/, "")}/health`);
+    const health = await fetch(`${base}/health`);
     const data = await health.json();
     const ver = data.version || "unknown";
     const node = data.node || "unknown";
 
-    const versionEls = [
-      document.getElementById("aboutVersion"),
-      document.getElementById("aboutVerDep"),
-    ];
-    versionEls.forEach(el => { if (el) el.textContent = `v${ver}`; });
+    verEl.textContent = `v${ver}`;
     const nodeEl = document.getElementById("aboutNodeVer");
     if (nodeEl) nodeEl.textContent = node;
-  } catch { /* leave as … */ }
 
-  // llama-server version via bridge
+    // Populate topbar version badge
+    const topbarVer = document.getElementById("topbarVersion");
+    if (topbarVer) topbarVer.textContent = `v${ver}`;
+  } catch { /* leave as — */ }
+
+  // llama-server version + platform via bridge
   try {
-    const base = (settings.apiBase || "").replace(/\/$/, "");
-    const sysRes = await fetch(`${base}/v1/system/info`, {
-      headers: settings.token ? { Authorization: `Bearer ${settings.token}` } : {}
-    });
+    const sysRes = await fetch(`${base}/v1/system/info`, { headers: authHeaders });
     if (sysRes.ok) {
       const sys = await sysRes.json();
       const llamaEl = document.getElementById("aboutLlamaVer");
-      if (llamaEl && sys.llamaServerVersion) llamaEl.textContent = sys.llamaServerVersion;
+      if (llamaEl) llamaEl.textContent = sys.llamaServerVersion || "—";
       const platEl = document.getElementById("aboutPlatform");
-      if (platEl && sys.platform) platEl.textContent = sys.platform;
+      if (platEl) platEl.textContent = sys.platform || "—";
+      const archEl = document.getElementById("aboutArch");
+      if (archEl) archEl.textContent = sys.arch || "—";
     }
   } catch { /* optional */ }
 
   // Set the API help link
   const helpLink = document.getElementById("aboutHelpLink");
-  if (helpLink) helpLink.href = `${(settings.apiBase || "").replace(/\/$/, "")}/help`;
+  if (helpLink) helpLink.href = `${base}/help`;
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────
@@ -186,4 +188,18 @@ void refreshGlobalApiAccess();
 store.startPolling();
 initTabs();
 initTestDialog();
+void loadTopbarVersion();
+
+async function loadTopbarVersion() {
+  try {
+    const base = (settings.apiBase || "").replace(/\/$/, "");
+    const res = await fetch(`${base}/health`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const ver = data.version;
+    if (!ver) return;
+    const el = document.getElementById("topbarVersion");
+    if (el) el.textContent = `v${ver}`;
+  } catch { /* not critical */ }
+}
 

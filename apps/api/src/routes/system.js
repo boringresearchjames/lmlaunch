@@ -27,7 +27,16 @@ router.get("/host-stats", async (_req, res) => {
   }
 });
 
-// ── Audit log ────────────────────────────────────────────────────────────────
+router.get("/system/info", async (_req, res) => {
+  try {
+    const result = await bridgeFetch("GET", "/v1/info");
+    res.json(result);
+  } catch {
+    res.json({ platform: process.platform, arch: process.arch, llamaServerBin: null, llamaServerVersion: null });
+  }
+});
+
+// ── Audit log ─────────────────────────────────────────────────────────────
 
 router.get("/audit", requireAdminToken, (_req, res) => {
   res.json({ data: state.audit });
