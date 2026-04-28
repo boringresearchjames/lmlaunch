@@ -150,6 +150,35 @@ function resolveServerArgs(profile) {
     }
   }
 
+  // Default --flash-attn on for any GPU-backed instance. Saves 10–30% on prompt
+  // processing and is a prerequisite for V-cache quantisation. Skipped for CPU.
+  // Users can override by passing `--flash-attn off` (or `--flash-attn auto`)
+  // explicitly in serverArgs.
+  if (backend !== "cpu") {
+    const hasFlashAttn = args.some((arg, idx) =>
+      arg === "--flash-attn" || arg === "-fa" || arg.startsWith("--flash-attn=") ||
+      (idx > 0 && (args[idx - 1] === "--flash-attn" || args[idx - 1] === "-fa"))
+    );
+    if (!hasFlashAttn) {
+      args.push("--flash-attn", "on");
+    }
+  }
+
+  // Default --parallel to maxInflightRequests so llama-server's continuous
+  // batching can actually serve concurrent requests instead of serialising
+  // them on a single slot. modelParallel (multi-process) and --parallel
+  // (multi-slot inside one process) compose: total concurrency is N_proc * N_slot.
+  const hasParallel = args.some((arg, idx) =>
+    arg === "--parallel" || arg === "-np" || arg.startsWith("--parallel=") ||
+    (idx > 0 && (args[idx - 1] === "--parallel" || args[idx - 1] === "-np"))
+  );
+  if (!hasParallel) {
+    const inflight = Number(profile?.maxInflightRequests);
+    if (Number.isInteger(inflight) && inflight > 1) {
+      args.push("--parallel", String(Math.min(inflight, 64)));
+    }
+  }
+
   return args;
 }
 
