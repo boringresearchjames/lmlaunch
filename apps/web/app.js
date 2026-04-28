@@ -170,16 +170,20 @@ async function loadAboutInfo() {
       const llamaEl = document.getElementById("aboutLlamaVer");
       if (llamaEl) {
         const ver = sys.llamaServerVersion;
-        if (ver && /^\d+$/.test(ver)) {
+        if (ver) {
           const a = document.createElement("a");
-          a.href = `https://github.com/ggml-org/llama.cpp/releases/tag/b${ver}`;
+          // Only deep-link to a specific release if it looks like a real build number (>= 1000)
+          const buildNum = /^\d+$/.test(ver) ? Number(ver) : NaN;
+          a.href = buildNum >= 1000
+            ? `https://github.com/ggml-org/llama.cpp/releases/tag/b${ver}`
+            : `https://github.com/ggml-org/llama.cpp/releases`;
           a.target = "_blank";
           a.rel = "noopener noreferrer";
-          a.textContent = `build ${ver}`;
+          a.textContent = buildNum >= 1000 ? `build ${ver}` : ver;
           llamaEl.textContent = "";
           llamaEl.appendChild(a);
         } else {
-          llamaEl.textContent = ver || "—";
+          llamaEl.textContent = "—";
         }
       }
       const platEl = document.getElementById("aboutPlatform");
