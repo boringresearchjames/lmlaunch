@@ -118,21 +118,65 @@ $("closeAll").onclick = async () => {
 function initTabs() {
   const tabInstances = document.getElementById("tabInstances");
   const tabModels = document.getElementById("tabModels");
+  const tabAbout = document.getElementById("tabAbout");
   const pageInstances = document.getElementById("pageInstances");
   const pageModels = document.getElementById("pageModels");
+  const pageAbout = document.getElementById("pageAbout");
   if (!tabInstances || !tabModels) return;
-  tabInstances.addEventListener("click", () => {
-    tabInstances.classList.add("tab-btn-active");
-    tabModels.classList.remove("tab-btn-active");
-    pageInstances.hidden = false;
-    pageModels.hidden = true;
+
+  function activate(activeTab, activePage) {
+    [tabInstances, tabModels, tabAbout].forEach(t => t?.classList.remove("tab-btn-active"));
+    [pageInstances, pageModels, pageAbout].forEach(p => { if (p) p.hidden = true; });
+    activeTab.classList.add("tab-btn-active");
+    activePage.hidden = false;
+  }
+
+  tabInstances.addEventListener("click", () => activate(tabInstances, pageInstances));
+  tabModels.addEventListener("click", () => activate(tabModels, pageModels));
+  tabAbout?.addEventListener("click", () => {
+    activate(tabAbout, pageAbout);
+    void loadAboutInfo();
   });
-  tabModels.addEventListener("click", () => {
-    tabModels.classList.add("tab-btn-active");
-    tabInstances.classList.remove("tab-btn-active");
-    pageInstances.hidden = true;
-    pageModels.hidden = false;
-  });
+}
+
+async function loadAboutInfo() {
+  // Only load once — if version is already populated, skip
+  const verEl = document.getElementById("aboutVerDep");
+  if (!verEl || verEl.textContent !== "…") return;
+
+  try {
+    const health = await fetch(`${(settings.apiBase || "").replace(/\/$/, "")}/health`);
+    const data = await health.json();
+    const ver = data.version || "unknown";
+    const node = data.node || "unknown";
+
+    const versionEls = [
+      document.getElementById("aboutVersion"),
+      document.getElementById("aboutVerDep"),
+    ];
+    versionEls.forEach(el => { if (el) el.textContent = `v${ver}`; });
+    const nodeEl = document.getElementById("aboutNodeVer");
+    if (nodeEl) nodeEl.textContent = node;
+  } catch { /* leave as … */ }
+
+  // llama-server version via bridge
+  try {
+    const base = (settings.apiBase || "").replace(/\/$/, "");
+    const sysRes = await fetch(`${base}/v1/system/info`, {
+      headers: settings.token ? { Authorization: `Bearer ${settings.token}` } : {}
+    });
+    if (sysRes.ok) {
+      const sys = await sysRes.json();
+      const llamaEl = document.getElementById("aboutLlamaVer");
+      if (llamaEl && sys.llamaServerVersion) llamaEl.textContent = sys.llamaServerVersion;
+      const platEl = document.getElementById("aboutPlatform");
+      if (platEl && sys.platform) platEl.textContent = sys.platform;
+    }
+  } catch { /* optional */ }
+
+  // Set the API help link
+  const helpLink = document.getElementById("aboutHelpLink");
+  if (helpLink) helpLink.href = `${(settings.apiBase || "").replace(/\/$/, "")}/help`;
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────
