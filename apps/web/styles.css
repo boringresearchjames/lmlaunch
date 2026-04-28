@@ -215,6 +215,15 @@ body {
   box-shadow: 0 6px 16px rgba(190, 44, 70, 0.45);
 }
 
+/* Custom elements are transparent grid wrappers — their inner sections
+   participate directly in the .layout grid. */
+lf-launch-form,
+lf-instances-panel,
+lf-config-library,
+lf-hub-page {
+  display: contents;
+}
+
 .layout {
   max-width: 1420px;
   margin: 0 auto;
