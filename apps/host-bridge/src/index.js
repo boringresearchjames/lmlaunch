@@ -273,12 +273,31 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
           : (ggufMeta?.blockCount || 32);
 
         // Exact KV bytes-per-token-per-layer from GGUF GQA fields.
-        // Formula: 2 (K+V) × kv_heads × head_dim × 2 bytes (fp16) = 4 × kv_heads × (embed / q_heads)
-        // Falls back to autoCtxBytesPerTokenPerLayer env-var heuristic if fields missing.
+        // Formula: 2 (K+V) × kv_heads × head_dim × bytesPerElement
+        // Default bytesPerElement = 2 (fp16). If user passes -ctk/-ctv quant flags,
+        // each element shrinks: q8_0 → 1 byte, q4_0/q4_1 → 0.5 bytes, q5_0/q5_1 → 0.625 bytes.
+        // We use the larger of ctk/ctv to stay conservative.
+        const kvQuantBytesPerElement = (() => {
+          const serverArgs = Array.isArray(profile?.runtime?.serverArgs) ? profile.runtime.serverArgs : [];
+          function quantBytes(flag) {
+            // Find the value after -ctk or -ctv in the args array
+            const idx = serverArgs.findIndex((a) => a === flag);
+            const val = idx >= 0 ? String(serverArgs[idx + 1] || "").toLowerCase() : "";
+            if (val === "f32") return 4;
+            if (val === "f16") return 2;
+            if (val === "bf16") return 2;
+            if (val === "q8_0") return 1;
+            if (val === "q5_0" || val === "q5_1") return 0.625;
+            if (val === "q4_0" || val === "q4_1") return 0.5;
+            return 2; // unknown or not set → assume fp16
+          }
+          return Math.max(quantBytes("-ctk"), quantBytes("-ctv"));
+        })();
+
         let bytesPerTokenPerLayer = null;
         if (ggufMeta?.headCountKv && ggufMeta?.embeddingLength && ggufMeta?.headCount) {
           const headDim = Math.floor(ggufMeta.embeddingLength / ggufMeta.headCount);
-          bytesPerTokenPerLayer = 4 * ggufMeta.headCountKv * headDim;
+          bytesPerTokenPerLayer = 2 * ggufMeta.headCountKv * headDim * kvQuantBytesPerElement;
         }
 
         // Estimate model weight VRAM from GGUF file size on disk.
@@ -312,6 +331,7 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
             num_layers: numLayers,
             kv_heads: ggufMeta?.headCountKv ?? null,
             bytes_per_token_per_layer: bytesPerTokenPerLayer,
+            kv_quant_bytes_per_element: kvQuantBytesPerElement,
             gpu_ids: gpuIds,
             buffer_fraction: autoCtxVramBufferFraction,
             computed_ctx: autoCtx
