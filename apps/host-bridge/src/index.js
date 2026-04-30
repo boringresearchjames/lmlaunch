@@ -607,17 +607,32 @@ function readGgufMetadata(filePath) {
     architecture: null,   // general.architecture — e.g. "llama", "qwen2", "mistral"
   };
 
+  // Model-specific metadata (architecture params) always appears before tokenizer
+  // data in well-formed GGUF files. Tokenizer vocabulary arrays can be 10-50 MB
+  // (150K+ string entries for large models) — far beyond our 2 MB read buffer.
+  // Strategy: return as soon as all 7 fields are found. If the buffer runs out
+  // mid-array (RangeError), catch it and return whatever we collected so far —
+  // the important fields will already be populated.
+  const WANT = 7;
+  let found = 0;
   for (let i = 0; i < nKv; i++) {
-    const key = str();
-    const type = u32();
-    const value = val(type);
-    if (key === "general.name" && typeof value === "string") result.name = value;
-    else if (key === "general.architecture" && typeof value === "string") result.architecture = value;
-    else if (key.endsWith(".context_length") && typeof value === "number" && value > 0) result.contextLength = value;
-    else if (key.endsWith(".block_count") && typeof value === "number" && value > 0) result.blockCount = value;
-    else if (key.endsWith(".attention.head_count_kv") && typeof value === "number" && value > 0) result.headCountKv = value;
-    else if (key.endsWith(".embedding_length") && typeof value === "number" && value > 0) result.embeddingLength = value;
-    else if (key.endsWith(".attention.head_count") && typeof value === "number" && value > 0) result.headCount = value;
+    try {
+      const key = str();
+      const type = u32();
+      const value = val(type);
+      if (key === "general.name" && typeof value === "string" && !result.name)                                    { result.name = value; found++; }
+      else if (key === "general.architecture" && typeof value === "string" && !result.architecture)               { result.architecture = value; found++; }
+      else if (key.endsWith(".context_length") && typeof value === "number" && value > 0 && !result.contextLength) { result.contextLength = value; found++; }
+      else if (key.endsWith(".block_count") && typeof value === "number" && value > 0 && !result.blockCount)     { result.blockCount = value; found++; }
+      else if (key.endsWith(".attention.head_count_kv") && typeof value === "number" && value > 0 && !result.headCountKv) { result.headCountKv = value; found++; }
+      else if (key.endsWith(".embedding_length") && typeof value === "number" && value > 0 && !result.embeddingLength) { result.embeddingLength = value; found++; }
+      else if (key.endsWith(".attention.head_count") && typeof value === "number" && value > 0 && !result.headCount) { result.headCount = value; found++; }
+      if (found === WANT) break; // all fields collected, no need to scan tokenizer data
+    } catch (_) {
+      // Buffer exhausted mid-entry (e.g. inside a large tokenizer array).
+      // Return what we have — model params always precede tokenizer in GGUF.
+      break;
+    }
   }
   return result;
 }
