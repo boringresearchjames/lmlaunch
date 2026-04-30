@@ -272,7 +272,7 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
         // layers allocate KV cache; use attention_layer_count when available.
         // When that key is absent, fall back to architecture-specific ratios derived from
         // the published model architecture (e.g. qwen35: 1 attention per 4 blocks = 0.25).
-        const HYBRID_ATTENTION_RATIO = { qwen35: 0.25, qwen3_5: 0.25 };
+        const HYBRID_ATTENTION_RATIO = { qwen35: 0.25, qwen3_5: 0.25, qwen35moe: 0.25, qwen3_5_moe: 0.25 };
         const numLayers = (Number.isInteger(Number(profile.numLayers)) && Number(profile.numLayers) > 0)
           ? Number(profile.numLayers)
           : ggufMeta?.kvLayerCount
