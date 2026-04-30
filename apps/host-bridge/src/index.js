@@ -264,11 +264,25 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
         const numLayers = (Number.isInteger(Number(profile.numLayers)) && Number(profile.numLayers) > 0)
           ? Number(profile.numLayers)
           : 32;
-        const autoCtx = computeAutoCtxSize(freeMibMap, gpuIds, numLayers);
+        // Estimate model weight VRAM from the GGUF file size on disk.
+        // Free VRAM is sampled BEFORE the model loads, so model weights must be subtracted
+        // or the computed ctx-size will exceed what actually fits (model + KV > total VRAM).
+        let modelSizeMib = 0;
+        const modelPath = String(profile.model || "").trim();
+        if (modelPath) {
+          try {
+            const stat = fs.statSync(modelPath);
+            modelSizeMib = stat.size / (1024 * 1024);
+          } catch (_) {
+            // model file not accessible — modelSizeMib stays 0; buffer is the only guard
+          }
+        }
+        const autoCtx = computeAutoCtxSize(freeMibMap, gpuIds, numLayers, modelSizeMib);
         if (autoCtx) {
           profile.contextLength = autoCtx;
           writeMeta(instanceId, "instance.auto_ctx", {
             free_mib: Object.fromEntries(freeMibMap),
+            model_size_mib: Math.round(modelSizeMib),
             gpu_ids: gpuIds,
             num_layers: numLayers,
             buffer_fraction: autoCtxVramBufferFraction,
@@ -511,7 +525,7 @@ async function getGpuFreeMemoryMap() {
 // Computes a safe --ctx-size from free VRAM across the assigned GPU set.
 // freeMibMap: Map<gpuIndex, freeMiB>; gpuIds: string[]; numLayers: number.
 // Returns null if inputs are insufficient (caller skips auto-sizing).
-function computeAutoCtxSize(freeMibMap, gpuIds, numLayers) {
+function computeAutoCtxSize(freeMibMap, gpuIds, numLayers, modelSizeMib = 0) {
   if (!(freeMibMap instanceof Map) || freeMibMap.size === 0) return null;
   if (!Array.isArray(gpuIds) || gpuIds.length === 0) return null;
   if (!Number.isInteger(numLayers) || numLayers <= 0) return null;
@@ -524,8 +538,12 @@ function computeAutoCtxSize(freeMibMap, gpuIds, numLayers) {
     totalFreeMiB += mib;
   }
 
+  // Subtract model weight VRAM (free VRAM is sampled before the model loads, so the
+  // model file size must be deducted to avoid model + KV cache exceeding total VRAM).
+  const kvBudgetMib = Math.max(0, totalFreeMiB - (Number.isFinite(modelSizeMib) ? modelSizeMib : 0));
+
   // Reserve buffer fraction, convert remaining to bytes.
-  const usableBytes = totalFreeMiB * (1 - autoCtxVramBufferFraction) * 1024 * 1024;
+  const usableBytes = kvBudgetMib * (1 - autoCtxVramBufferFraction) * 1024 * 1024;
   const ctxSize = Math.floor(usableBytes / (numLayers * autoCtxBytesPerTokenPerLayer));
 
   // Clamp: minimum 512 tokens, round down to nearest 256 for clean numbers.
