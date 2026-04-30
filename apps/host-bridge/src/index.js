@@ -264,27 +264,14 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
         let ggufMeta = null;
         const modelPath = String(profile.model || "").trim();
         if (modelPath) {
-          try { ggufMeta = readGgufMetadata(modelPath); } catch (_) { /* proceed without */ }
+          try { ggufMeta = await readGgufMetadata(modelPath); } catch (_) { /* proceed without */ }
         }
 
-        // Layer count: profile override > GGUF KV-cache layers > arch-specific ratio > GGUF block_count > fallback 32.
-        // For hybrid models (e.g. Qwen3.5/3.6 with Gated DeltaNet), only true attention
-        // layers allocate KV cache; use attention_layer_count when available.
-        // When that key is absent, fall back to architecture-specific ratios derived from
-        // the published model architecture (e.g. qwen35: 1 attention per 4 blocks = 0.25).
-        const HYBRID_ATTENTION_RATIO = { qwen35: 0.25, qwen3_5: 0.25, qwen35moe: 0.25, qwen3_5_moe: 0.25 };
+        // Layer count: profile override > GGUF attention_layer_count (hybrid models) >
+        // tensor-name count (auto-detected from blk.N.attn_k.weight names) > block_count > 32.
         const numLayers = (Number.isInteger(Number(profile.numLayers)) && Number(profile.numLayers) > 0)
           ? Number(profile.numLayers)
-          : ggufMeta?.kvLayerCount
-          ?? (() => {
-            const arch = ggufMeta?.architecture;
-            const ratio = arch && HYBRID_ATTENTION_RATIO[arch];
-            return (ratio && ggufMeta?.blockCount)
-              ? Math.round(ggufMeta.blockCount * ratio)
-              : null;
-          })()
-          ?? ggufMeta?.blockCount
-          ?? 32;
+          : ggufMeta?.kvLayerCount ?? ggufMeta?.blockCount ?? 32;
 
         // Exact KV bytes-per-token-per-layer from GGUF GQA fields.
         // Formula: 2 (K+V) × kv_heads × head_dim × bytesPerElement
@@ -597,95 +584,124 @@ async function getGpuFreeMemoryMap() {
   }
 }
 
-// Reads key metadata from a GGUF file's binary header.
-// Returns: { contextLength, blockCount, kvLayerCount, headCountKv, keyLength, embeddingLength, headCount, name, architecture }
-// All fields are null if not present or if the file is not a valid GGUF.
-function readGgufMetadata(filePath) {
-  const GGUF_MAGIC_LE = 0x46554747; // 'GGUF'
-  // Read up to 2 MB — enough to cover all metadata KV pairs for any known model.
-  const fd = fs.openSync(filePath, "r");
-  const buf = Buffer.alloc(2 * 1024 * 1024);
-  const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
-  fs.closeSync(fd);
-  const data = buf.subarray(0, bytesRead);
-
-  let off = 0;
-  function u8()  { const v = data.readUInt8(off);      off += 1; return v; }
-  function u16() { const v = data.readUInt16LE(off);   off += 2; return v; }
-  function u32() { const v = data.readUInt32LE(off);   off += 4; return v; }
-  function i32() { const v = data.readInt32LE(off);    off += 4; return v; }
-  function f32() { const v = data.readFloatLE(off);    off += 4; return v; }
-  function u64() { const v = Number(data.readBigUInt64LE(off)); off += 8; return v; }
-  function i64() { const v = Number(data.readBigInt64LE(off));  off += 8; return v; }
-  function f64() { const v = data.readDoubleLE(off);   off += 8; return v; }
-  function str() { const len = u64(); const s = data.toString("utf8", off, off + len); off += len; return s; }
-  function val(type) {
-    switch (type) {
-      case 0:  return u8();             // UINT8
-      case 1:  return u8();             // INT8
-      case 2:  return u16();            // UINT16
-      case 3:  return u16();            // INT16
-      case 4:  return u32();            // UINT32
-      case 5:  return i32();            // INT32
-      case 6:  return f32();            // FLOAT32
-      case 7:  return u8() !== 0;       // BOOL
-      case 8:  return str();            // STRING
-      case 9:  { const t = u32(); const cnt = u64(); for (let i = 0; i < cnt; i++) val(t); return null; } // ARRAY — skip
-      case 10: return u64();            // UINT64
-      case 11: return i64();            // INT64
-      case 12: return f64();            // FLOAT64
-      default: throw new Error(`Unknown GGUF type ${type}`);
-    }
+// Streaming buffered reader for GGUF binary parsing.
+// Reads the file in chunks to avoid loading the full model file into memory.
+class _GgufReader {
+  constructor(fd, chunkSize = 65536) {
+    this.fd = fd;
+    this._chunkSize = chunkSize;
+    this._buf = Buffer.allocUnsafe(chunkSize);
+    this._bufStart = 0;
+    this._bufEnd = 0;
+    this.pos = 0;
   }
-
-  if (u32() !== GGUF_MAGIC_LE) return null;
-  const version = u32();
-  if (version < 1 || version > 3) return null;
-  u64(); // n_tensors
-  const nKv = u64();
-
-  const result = {
-    contextLength: null,  // *.context_length  — model's max trained context window
-    blockCount: null,     // *.block_count      — total transformer blocks (incl. non-KV layers)
-    kvLayerCount: null,   // *.attention_layer_count — KV-cache layers only (hybrid models)
-    headCountKv: null,    // *.attention.head_count_kv — GQA KV heads
-    keyLength: null,      // *.attention.key_length    — explicit per-head KV dimension
-    embeddingLength: null,// *.embedding_length — hidden dimension
-    headCount: null,      // *.attention.head_count    — query heads
-    name: null,           // general.name       — human-readable model name
-    architecture: null,   // general.architecture — e.g. "llama", "qwen2", "mistral"
-  };
-
-  // Model-specific metadata (architecture params) always appears before tokenizer
-  // data in well-formed GGUF files. Tokenizer vocabulary arrays can be 10-50 MB
-  // (150K+ string entries for large models) — far beyond our 2 MB read buffer.
-  // Strategy: return as soon as all 9 fields are found. If the buffer runs out
-  // mid-array (RangeError), catch it and return whatever we collected so far —
-  // the important fields will already be populated.
-  const WANT = 9;
-  let found = 0;
-  for (let i = 0; i < nKv; i++) {
-    try {
-      const key = str();
-      const type = u32();
-      const value = val(type);
-      if (key === "general.name" && typeof value === "string" && !result.name)                                    { result.name = value; found++; }
-      else if (key === "general.architecture" && typeof value === "string" && !result.architecture)               { result.architecture = value; found++; }
-      else if (key.endsWith(".context_length") && typeof value === "number" && value > 0 && !result.contextLength) { result.contextLength = value; found++; }
-      else if (key.endsWith(".block_count") && typeof value === "number" && value > 0 && !result.blockCount)     { result.blockCount = value; found++; }
-      else if (key.endsWith(".attention_layer_count") && typeof value === "number" && value > 0 && !result.kvLayerCount) { result.kvLayerCount = value; found++; }
-      else if (key.endsWith(".attention.head_count_kv") && typeof value === "number" && value > 0 && !result.headCountKv) { result.headCountKv = value; found++; }
-      else if (key.endsWith(".attention.key_length") && typeof value === "number" && value > 0 && !result.keyLength) { result.keyLength = value; found++; }
-      else if (key.endsWith(".embedding_length") && typeof value === "number" && value > 0 && !result.embeddingLength) { result.embeddingLength = value; found++; }
-      else if (key.endsWith(".attention.head_count") && typeof value === "number" && value > 0 && !result.headCount) { result.headCount = value; found++; }
-      if (found === WANT) break; // all fields collected, no need to scan tokenizer data
-    } catch (_) {
-      // Buffer exhausted mid-entry (e.g. inside a large tokenizer array).
-      // Return what we have — model params always precede tokenizer in GGUF.
-      break;
+  async readBytes(n) {
+    if (this.pos < this._bufStart || this.pos + n > this._bufEnd) {
+      const readSize = Math.max(n, this._chunkSize);
+      if (readSize > this._buf.length) this._buf = Buffer.allocUnsafe(readSize);
+      const { bytesRead } = await this.fd.read(this._buf, 0, readSize, this.pos);
+      this._bufStart = this.pos;
+      this._bufEnd = this.pos + bytesRead;
+      if (bytesRead < n) throw new RangeError("GGUF: unexpected EOF");
     }
+    const off = this.pos - this._bufStart;
+    const slice = this._buf.subarray(off, off + n);
+    this.pos += n;
+    return slice;
   }
-  return result;
+  skip(n) { this.pos += n; }
+  async u32() { return (await this.readBytes(4)).readUInt32LE(0); }
+  async u64() { return Number((await this.readBytes(8)).readBigUInt64LE(0)); }
+  async str() { const len = await this.u64(); return (await this.readBytes(len)).toString("utf8"); }
+  // Skip a GGUF value without storing it.
+  // Fixed-size types are bulk-skipped; string arrays are iterated (length-prefixed elements).
+  async skipVal(type) {
+    const FIXED = { 0:1,1:1,2:2,3:2,4:4,5:4,6:4,7:1,10:8,11:8,12:8 };
+    if (FIXED[type] !== undefined) { this.skip(FIXED[type]); return; }
+    if (type === 8) { this.skip(await this.u64()); return; }  // STRING
+    if (type === 9) {                                          // ARRAY
+      const elemType = await this.u32();
+      const count    = await this.u64();
+      if (FIXED[elemType] !== undefined) { this.skip(FIXED[elemType] * count); return; }
+      if (elemType === 8) { for (let j = 0; j < count; j++) this.skip(await this.u64()); return; }
+      throw new Error(`Unknown GGUF array element type ${elemType}`);
+    }
+    throw new Error(`Unknown GGUF type ${type}`);
+  }
+}
+
+// Reads key metadata from a GGUF file.
+// Streams through all metadata KV pairs, then reads tensor info to count attention
+// layers — this is architecture-agnostic and works for any hybrid model without
+// needing a hardcoded lookup table.
+// Returns: { contextLength, blockCount, kvLayerCount, headCountKv, keyLength,
+//           embeddingLength, headCount, name, architecture }
+async function readGgufMetadata(filePath) {
+  let fd = null;
+  try {
+    fd = await fs.promises.open(filePath, "r");
+    const r = new _GgufReader(fd);
+
+    // --- Header ---
+    if ((await r.u32()) !== 0x46554747) return null; // magic 'GGUF'
+    const version = await r.u32();
+    if (version < 1 || version > 3) return null;
+    const tensorCount = await r.u64();
+    const kvCount     = await r.u64();
+
+    // --- Metadata KV pairs ---
+    const result = {
+      contextLength: null, blockCount: null,    kvLayerCount: null,
+      headCountKv:   null, keyLength:   null,   embeddingLength: null,
+      headCount:     null, name:        null,   architecture:    null,
+    };
+    for (let i = 0; i < kvCount; i++) {
+      const key  = await r.str();
+      const type = await r.u32();
+      if (type === 4 || type === 5) {          // UINT32 / INT32
+        const v = await r.u32();
+        if      (key.endsWith(".context_length")          && !result.contextLength) result.contextLength = v;
+        else if (key.endsWith(".block_count")             && !result.blockCount)    result.blockCount    = v;
+        else if (key.endsWith(".attention_layer_count")   && !result.kvLayerCount)  result.kvLayerCount  = v;
+        else if (key.endsWith(".attention.head_count_kv") && !result.headCountKv)   result.headCountKv   = v;
+        else if (key.endsWith(".attention.key_length")    && !result.keyLength)     result.keyLength     = v;
+        else if (key.endsWith(".embedding_length")        && !result.embeddingLength) result.embeddingLength = v;
+        else if (key.endsWith(".attention.head_count")    && !result.headCount)     result.headCount     = v;
+      } else if (type === 8) {                 // STRING
+        const v = await r.str();
+        if      (key === "general.name"         && !result.name)         result.name         = v;
+        else if (key === "general.architecture" && !result.architecture) result.architecture = v;
+      } else {
+        await r.skipVal(type);
+      }
+    }
+
+    // --- Tensor info → auto-detect KV-cache layers ---
+    // Tensor names follow the pattern "blk.N.attn_k.weight" / "blk.N.attn_v.weight".
+    // Counting unique N values with attention tensors gives the true KV layer count,
+    // correctly handling hybrid architectures (e.g. Gated DeltaNet blocks have no
+    // attn_k/attn_v tensors) without any architecture-specific lookup table.
+    if (!result.kvLayerCount) {
+      const attnBlocks = new Set();
+      for (let i = 0; i < tensorCount; i++) {
+        const nameLen = await r.u64();
+        const name    = (await r.readBytes(nameLen)).toString("utf8");
+        const nDims   = await r.u32();
+        r.skip(8 * nDims); // dims (uint64 each)
+        r.skip(4);          // type
+        r.skip(8);          // offset
+        const m = name.match(/^blk\.([0-9]+)\.attn_[kv]/);
+        if (m) attnBlocks.add(m[1]);
+      }
+      if (attnBlocks.size > 0) result.kvLayerCount = attnBlocks.size;
+    }
+
+    return result;
+  } catch (e) {
+    return null; // corrupt/unreadable GGUF — caller proceeds without metadata
+  } finally {
+    if (fd) await fd.close();
+  }
 }
 
 // Computes a safe --ctx-size from free VRAM across the assigned GPU set.
