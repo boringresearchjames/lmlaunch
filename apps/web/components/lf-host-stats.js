@@ -9,11 +9,11 @@ class LfHostStats extends HTMLElement {
   #gpuData = null;
 
   connectedCallback() {
-    const hostData = store.get('hostStats');
-    if (hostData) { this.#hostData = hostData; this.#render(); }
-
     const gpuData = store.get('gpuHardware');
     if (gpuData) { this.#gpuData = gpuData; }
+
+    const hostData = store.get('hostStats');
+    if (hostData) { this.#hostData = hostData; this.#render(); }
 
     store.subscribe('hostStats', (data) => { this.#hostData = data; this.#render(); });
     store.subscribe('gpuHardware', (data) => { this.#gpuData = data; this.#render(); });
