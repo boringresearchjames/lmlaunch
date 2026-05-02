@@ -20,6 +20,7 @@ Every instance is reachable through a single **OpenAI-compatible API** at `http:
 - Periodic health monitoring — instances are polled every 30 s and auto-restarted if unhealthy
 - Prometheus scrape endpoint at `GET /metrics` (per-instance + per-GPU telemetry)
 - Compact VRAM bars in the GPU column with utilisation %, temperature, and power
+- Aggregate GPU VRAM usage bar in the instances table footer (used/total GiB across all assigned GPUs)
 - Log viewer with auto-tail and clone-setup action per instance
 - Model Routing dashboard section — visual overview of which instances form a least-loaded pool vs. solo routes, with one-click copy of each pinned model name
 
@@ -104,11 +105,12 @@ Open **http://localhost:8081**.
 
 | Platform | Binary to download |
 |---|---|
-| Linux (NVIDIA, CUDA 12) | `llama-*-bin-linux-x64-cuda-cu12*.zip` |
-| Linux (AMD, ROCm) | `llama-*-bin-linux-x64-rocm*.zip` |
-| Linux (CPU) | `llama-*-bin-linux-x64-avx2*.zip` |
-| Windows (NVIDIA, CUDA 12) | `llama-*-bin-win-cuda-cu12-x64.zip` |
-| Windows (CPU / AVX2) | `llama-*-bin-win-avx2-x64.zip` |
+| Linux (NVIDIA, CUDA) | No pre-built CUDA binary — build from source: `cmake -B build -DGGML_CUDA=on && cmake --build build --target llama-server -j$(nproc)` |
+| Linux (AMD, ROCm) | `llama-*-bin-ubuntu-rocm-*-x64.tar.gz` |
+| Linux (CPU) | `llama-*-bin-ubuntu-x64.tar.gz` |
+| Windows (NVIDIA, CUDA 12) | `llama-*-bin-win-cuda-12.4-x64.zip` |
+| Windows (NVIDIA, CUDA 13) | `llama-*-bin-win-cuda-13.1-x64.zip` |
+| Windows (CPU) | `llama-*-bin-win-cpu-x64.zip` |
 
 ### 2. Install
 
@@ -280,7 +282,6 @@ openssl rand -hex 32
 
 - **Single-host only** — LlamaFleet manages instances on one machine. A bridge-router component exists for multi-host setups but multi-host is not the primary target.
 - **`llama-server` binary required** — LlamaFleet does not bundle or build it. Get a binary from the [llama.cpp releases page](https://github.com/ggerganov/llama.cpp/releases).
-- **HF Hub browser** — Download models directly from Hugging Face via the Models tab. Local GGUF files are also auto-scanned from `~/.lmstudio/models`, `~/.ollama/models`, `~/.cache/huggingface/hub`, and `~/unsloth_studio` (or a custom `MODELS_DIR`).
 - **No per-instance auth** — Auth is enforced at the proxy layer via the global `API_AUTH_TOKEN`. There is no per-instance key.
 - **No speculative decoding or prefix caching** — Pass the relevant `llama-server` flags via `runtimeArgs` if the binary supports them.
 
