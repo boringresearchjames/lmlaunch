@@ -180,16 +180,23 @@ async function loadAboutInfo() {
           a.textContent = buildNum >= 1000 ? `build ${ver}` : ver;
           llamaEl.textContent = "";
           llamaEl.appendChild(a);
-          // Show update badge if installed build is behind latest
+          // Show update badge if installed build is behind latest, or if we
+          // can't parse the installed version as a standard release build number.
           const latest = sys.llamaCppLatest;
-          if (latest?.latestBuild && buildNum >= 1000 && latest.latestBuild > buildNum) {
-            const badge = document.createElement("a");
-            badge.href = `https://github.com/ggml-org/llama.cpp/releases/tag/${latest.latestTag}`;
-            badge.target = "_blank";
-            badge.rel = "noopener noreferrer";
-            badge.textContent = `update available (b${latest.latestBuild})`;
-            badge.style.cssText = "margin-left:0.5em;font-size:0.78em;background:var(--warn,#b45309);color:#fff;padding:1px 6px;border-radius:4px;text-decoration:none;vertical-align:middle";
-            llamaEl.appendChild(badge);
+          if (latest?.latestBuild && latest.latestTag) {
+            const isStandardBuild = buildNum >= 1000;
+            const needsUpdate = !isStandardBuild || latest.latestBuild > buildNum;
+            if (needsUpdate) {
+              const badge = document.createElement("a");
+              badge.href = `https://github.com/ggml-org/llama.cpp/releases/tag/${latest.latestTag}`;
+              badge.target = "_blank";
+              badge.rel = "noopener noreferrer";
+              badge.textContent = isStandardBuild
+                ? `update available (b${latest.latestBuild})`
+                : `latest: b${latest.latestBuild}`;
+              badge.style.cssText = "margin-left:0.5em;font-size:0.78em;background:var(--warn,#b45309);color:#fff;padding:1px 6px;border-radius:4px;text-decoration:none;vertical-align:middle";
+              llamaEl.appendChild(badge);
+            }
           }
         } else {
           llamaEl.textContent = "—";
