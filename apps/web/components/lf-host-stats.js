@@ -41,9 +41,9 @@ class LfHostStats extends HTMLElement {
     const load1 = data.loadavg ? data.loadavg[0].toFixed(2) : '\u2014';
 
     const coreSquares = Array.isArray(data.cpu_per_core) && data.cpu_per_core.length > 0
-      ? data.cpu_per_core.map((pct) => {
+      ? data.cpu_per_core.map((pct, i) => {
           const c = pct >= 80 ? 'var(--danger)' : pct >= 40 ? '#ffbe5c' : pct >= 10 ? 'var(--accent)' : 'rgba(159,176,216,0.18)';
-          return `<span class="hs-core-sq" style="background:${c}" title="${pct}%"></span>`;
+          return `<span class="hs-core-sq" style="background:${c}" title="Core ${i}: ${pct}%"></span>`;
         }).join('')
       : '';
 
@@ -78,7 +78,7 @@ class LfHostStats extends HTMLElement {
       <span class="hs-value">${memUsedGib}/${memTotalGib}&thinsp;GiB</span>
       <span class="hs-muted">${memPct}%</span>
     </div>${gpuHtml}
-    ${coreSquares ? `<div class="hs-cores">${coreSquares}</div>` : ''}`;
+    ${coreSquares ? `<div class="hs-cores" title="Per-core CPU utilisation">${coreSquares}</div>` : ''}`;  
   }
 }
 

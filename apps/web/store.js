@@ -50,6 +50,7 @@ class Store extends EventTarget {
   startPolling() {
     void this.#fetchInstances().catch(() => {});
     void this.#fetchHostStats().catch(() => {});
+    void this.#fetchGpuHardware().catch(() => {});
 
     setInterval(() => void this.#fetchInstances().catch(() => {}), 2000);
     setInterval(() => void this.#fetchHostStats().catch(() => {}), 3000);
