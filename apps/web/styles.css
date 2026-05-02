@@ -1454,6 +1454,10 @@ pre {
 
 #hostStatsPanel { display: none; }
 
+lf-host-stats {
+  grid-column: span 12;
+}
+
 /* ── Host stats strip (standalone bar between sections) ─────────── */
 
 .host-strip {
