@@ -1273,7 +1273,16 @@ app.post("/v1/instances/start", async (req, res) => {
 
   const running = instances.get(instanceId);
   if (running && running.state !== "stopped") {
-    return res.status(409).json({ error: "instance already running" });
+    if (running.state === "unhealthy") {
+      // Kill any lingering process before allowing a fresh start
+      running.restartInFlight = false;
+      running.restartAttempts = 0;
+      if (running.process && !running.process.killed) {
+        try { running.process.kill("SIGTERM"); } catch { /* ignore */ }
+      }
+    } else {
+      return res.status(409).json({ error: "instance already running" });
+    }
   }
 
   const restartPolicy = normalizeRestartPolicy(profile?.restartPolicy);
