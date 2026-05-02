@@ -36,6 +36,7 @@ const logsDir = path.join(dataRoot, "logs");
 fs.mkdirSync(logsDir, { recursive: true });
 
 const instances = new Map();
+let llamaServerBuildTag = null; // cached from "build_info:" stderr line e.g. "b760272"
 let numactlSupportedCache = null;
 let gpuNumaMapCache = null;
 let gpuNumaMapCachedAt = 0;
@@ -413,6 +414,12 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
     writeLog(instanceId, "stderr", text);
     if (text.includes("couldn't bind HTTP server socket")) {
       record.lastError = `Port ${record.profile?.port} is already in use`;
+    }
+    // Cache the real build tag (e.g. "b760272") from "build_info: b1-b760272" in stderr.
+    // --version only outputs "1" on custom builds; this gives us the actual build number.
+    if (!llamaServerBuildTag) {
+      const biMatch = text.match(/build_info:.*?(b\d{4,})/);
+      if (biMatch) llamaServerBuildTag = biMatch[1];
     }
   });
 
@@ -1405,9 +1412,14 @@ app.get("/v1/info", auth, async (_req, res) => {
   try {
     await new Promise((resolve) => {
       execFile(llamaServerBinary, ["--version"], { timeout: 4000 }, (_err, stdout, stderr) => {
-        const raw = (stdout || stderr || "").trim();
-        const match = raw.match(/version:\s*(\S+)/) || raw.match(/build\s+(\d+)/);
+        const raw = ((stdout || "") + "\n" + (stderr || "")).trim();
+        const match = raw.match(/build_info:.*?(b\d{4,})/) || raw.match(/version:\s*(\S+)/) || raw.match(/build\s+(\d+)/);
         if (match) info.llamaServerVersion = match[1].slice(0, 80);
+        // If --version only returned a plain number (e.g. "1"), prefer the build
+        // tag we've seen in instance stderr (e.g. "b760272" from "build_info:").
+        if (llamaServerBuildTag && /^\d+$/.test(info.llamaServerVersion || "")) {
+          info.llamaServerVersion = llamaServerBuildTag;
+        }
         resolve();
       });
     });
