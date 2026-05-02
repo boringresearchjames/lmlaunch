@@ -407,7 +407,14 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
   };
 
   child.stdout?.on("data", (chunk) => streamLog("stdout", chunk));
-  child.stderr?.on("data", (chunk) => streamLog("stderr", chunk));
+  child.stderr?.on("data", (chunk) => {
+    const text = redactSensitiveText(String(chunk || ""));
+    if (!text) return;
+    writeLog(instanceId, "stderr", text);
+    if (text.includes("couldn't bind HTTP server socket")) {
+      record.lastError = `Port ${record.profile?.port} is already in use`;
+    }
+  });
 
   child.on("exit", (code, signal) => {
     writeMeta(instanceId, "instance.process.exit", {
@@ -422,7 +429,9 @@ async function spawnLlamaServer(instanceId, record, env, numaNode = null) {
     }
 
     record.state = "unhealthy";
-    record.lastError = `llama.cpp process exited (code=${String(code)}, signal=${String(signal)})`;
+    if (!record.lastError) {
+      record.lastError = `llama.cpp process exited (code=${String(code)}, signal=${String(signal)})`;
+    }
     void maybeAutoRestart(instanceId, record, "process_exit");
   });
 
