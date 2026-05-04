@@ -30,24 +30,25 @@ LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio or Olla
 
 ---
 
-## Why LlamaFleet instead of Ollama / LM Studio?
+## Why LlamaFleet?
 
-All three tools are built on top of `llama.cpp`, so they share the same hardware support and quantisation formats. The differences are in how much control you get over each running process and how you compose them.
+All four tools run `llama.cpp` under the hood. The differences are in the ops model — how much control you have over each running process and how you compose them.
 
-| | LlamaFleet | Ollama | LM Studio |
-|---|---|---|---|
-| Pass-through `llama-server` flags | ✅ Any flag, edited per instance | ⚠ Subset via `Modelfile` params | ⚠ Subset via GUI/JSON |
-| Per-instance GPU pinning | ✅ Explicit `CUDA_VISIBLE_DEVICES` per process | ⚠ Global env var | ⚠ Per-model GPU select (recent versions) |
-| Multiple models loaded at once | ✅ Unlimited, independent processes | ✅ Via `OLLAMA_MAX_LOADED_MODELS` | ✅ JIT-loaded |
-| Least-loaded pooling under one model name | ✅ Built-in across instances (round-robin tiebreak) | ❌ | ❌ |
-| Heterogeneous pools (mix GPU/CPU/runtimes) | ✅ Mix any runtimes under one model name | ❌ | ❌ |
-| Any local GGUF | ✅ Scan paths + HF Hub browser | ✅ `FROM ./model.gguf` in Modelfile | ✅ Local files + HF browser |
-| Browser dashboard | ✅ | ❌ (3rd-party only) | ❌ Desktop GUI only |
-| OpenAI-compatible REST API | ✅ | ✅ | ✅ |
-| Headless server / SSH box / systemd | ✅ Designed for it | ✅ | ❌ Desktop app |
-| Multi-user auth / RBAC | ❌ Single shared bearer token | ❌ No auth | ❌ No auth |
+| | LlamaFleet | LocalAI | Ollama | LM Studio |
+|---|---|---|---|---|
+| Pass-through `llama-server` flags | ✅ Any flag, per instance | ⚠ Via YAML backend configs | ⚠ Subset via `Modelfile` | ⚠ Subset via GUI/JSON |
+| Per-instance GPU pinning | ✅ Explicit `CUDA_VISIBLE_DEVICES` per process | ⚠ Per-container via Docker `--gpus` | ⚠ Global env var | ⚠ Per-model GPU select (recent versions) |
+| Multiple models loaded at once | ✅ Unlimited, independent processes | ✅ Multiple backends | ✅ Via `OLLAMA_MAX_LOADED_MODELS` | ✅ JIT-loaded |
+| Least-loaded pooling under one model name | ✅ Built-in (round-robin tiebreak) | ❌ | ❌ | ❌ |
+| Heterogeneous pools (mix GPU/CPU instances) | ✅ Mix any runtimes under one model name | ❌ | ❌ | ❌ |
+| Any local GGUF | ✅ Scan paths + HF Hub browser | ✅ Local files | ✅ `FROM ./model.gguf` | ✅ Local files + HF browser |
+| Browser dashboard | ✅ | ✅ React UI | ❌ (3rd-party only) | ❌ Desktop GUI only |
+| OpenAI-compatible REST API | ✅ | ✅ | ✅ | ✅ |
+| Headless server / SSH box / systemd | ✅ Native processes, systemd service | ✅ Via Docker | ✅ | ❌ Desktop app |
+| No Docker required | ✅ | ❌ Docker-first | ✅ | ✅ |
+| Multi-user auth / RBAC | ❌ Single shared bearer token | ✅ | ❌ No auth | ❌ No auth |
 
-**The short version:** if you need to carve up a multi-GPU box into several `llama-server` processes with explicit per-process hardware control, and pool them behind a single OpenAI endpoint, LlamaFleet is built for that. If you want a one-command model registry on your laptop, Ollama is simpler. If you want a polished desktop GUI for trying models locally, LM Studio is hard to beat.
+**The short version:** [LocalAI](https://github.com/mudler/LocalAI) is the broadest alternative — it wraps 36+ backends (llama.cpp, Whisper, Stable Diffusion, and more) and includes RBAC and distributed mode. If you need that breadth, LocalAI is the right tool. LlamaFleet does one thing: it treats each `llama-server` process as an independently-controlled unit — its own GPUs, its own queue, its own crash domain — and routes load across them intelligently. If you need fine-grained per-process GPU control, heterogeneous compute pools, and direct `llama-server` flag access without Docker, LlamaFleet is more direct. If you want a one-command model registry on your laptop, Ollama is simpler. If you want a polished desktop GUI for trying models, LM Studio is hard to beat.
 
 ---
 
@@ -235,7 +236,7 @@ sudo bash scripts/install-systemd.sh
 
 ## Background
 
-This started as a practical fix for running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after model swaps, processes crashed under sustained load, and there was no way to pin a model to specific cards or isolate instances. No existing tool — GUI or headless — managed independent `llama-server` processes per GPU subset from a single control plane. LlamaFleet is that tool.
+This started as a practical fix for running a fleet of V100s with LM Studio: VRAM was bleeding between GPUs after model swaps, processes crashed under sustained load, and there was no way to pin a model to specific cards or isolate instances. Existing tools either ran a single server process or abstracted away the process boundary entirely. LlamaFleet exposes that boundary directly — one `llama-server` process per GPU subset, managed from a single control plane.
 
 The GPU isolation problem is particularly relevant for pre-Ampere hardware. vLLM and SGLang require CUDA 11+ with Ampere-class features; older V100s and GTX 10/20 series cards either hit capability gaps or produce incorrect results. llama.cpp supports this hardware generation well, but running multiple instances with correct `CUDA_VISIBLE_DEVICES` per process, log management, readiness polling, and crash recovery is operationally tedious. LlamaFleet wraps all of that.
 
@@ -269,12 +270,6 @@ openssl rand -hex 32
 - Per-user or per-instance auth — one global token for everything
 - Rate limiting — your reverse proxy or firewall should handle this
 - Audit logging for individual API calls — only instance lifecycle events are logged
-
----
-
-## Planned / TODO
-
-- **Diffusion engine support** — llama-box exposes image generation at `/v1/images/generations` (OpenAI-compatible). LlamaFleet's proxy already handles arbitrary endpoints transparently, so the remaining work is: auto-ctx sizing that skips KV cache calculations for diffusion instances, a `modelType: diffusion` flag in the launch form to suppress irrelevant fields (context length, parallel slots), and UI display of the image generation endpoint alongside the chat endpoint in the routing map. llama-box can be used as a drop-in binary replacement for `llama-server` for diffusion instances in the meantime.
 
 ---
 
