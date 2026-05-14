@@ -379,7 +379,7 @@ class LfLaunchForm extends HTMLElement {
           </label>
           <label class="launch-field launch-field-span-3">
             Server Args
-            <input id="launchServerArgs" type="text" value="-b 2048 -ub 1024 -ctk q8_0 -ctv q8_0 -ngl 999" placeholder="e.g. --flash-attn on -b 2048" class="launch-input" />
+            <input id="launchServerArgs" type="text" value="-b 2048 -ub 1024 -ngl 999 --flash-attn on" placeholder="e.g. --flash-attn on -b 2048" class="launch-input" />
             <small class="launch-field-help">Extra flags passed directly to llama-server. Separate with spaces.</small>
           </label>
           <label class="launch-field">
