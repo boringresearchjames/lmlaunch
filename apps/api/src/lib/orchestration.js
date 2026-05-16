@@ -207,6 +207,32 @@ export async function resolveBackend(route, body) {
   return { backend: route.defaultBackend, ruleId: "default" };
 }
 
+// ---------------------------------------------------------------------------
+// System prompt injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Append a configured suffix to the system message of a request body.
+ * If no system message exists one is created. Returns a new body object;
+ * the original is not mutated.
+ */
+export function injectSystemPrompt(body, route) {
+  const suffix = String(route.systemPromptSuffix || "").trim();
+  if (!suffix || !Array.isArray(body.messages)) return body;
+
+  const messages = [...body.messages];
+  const sysIdx = messages.findIndex((m) => m?.role === "system");
+
+  if (sysIdx >= 0) {
+    const existing = typeof messages[sysIdx].content === "string" ? messages[sysIdx].content : "";
+    messages[sysIdx] = { ...messages[sysIdx], content: `${existing}\n\n${suffix}` };
+  } else {
+    messages.unshift({ role: "system", content: suffix });
+  }
+
+  return { ...body, messages };
+}
+
 /**
  * Look up a frontier backend by id.
  */

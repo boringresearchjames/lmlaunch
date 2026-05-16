@@ -22,7 +22,7 @@ import localModelsRouter from "./routes/local-models.js";
 import hubRouter from "./routes/hub.js";
 import systemRouter from "./routes/system.js";
 import orchestrationRouter from "./routes/orchestration.js";
-import { matchOrchestrationRoute, resolveBackend, getFrontierBackend, appendOrchestrationLog } from "./lib/orchestration.js";
+import { matchOrchestrationRoute, resolveBackend, getFrontierBackend, appendOrchestrationLog, injectSystemPrompt } from "./lib/orchestration.js";
 import { proxyToFrontier } from "./lib/frontier.js";
 import { resolveInstanceByModelName } from "./lib/routing.js";
 import { proxyToInstance } from "./lib/proxy.js";
@@ -83,6 +83,7 @@ app.post("/v1/chat/completions", largeJsonOrch, async (req, res, next) => {
 
   const startedAt = Date.now();
   const { backend, ruleId } = await resolveBackend(route, req.body);
+  if (route.systemPromptSuffix) req.body = injectSystemPrompt(req.body, route);
 
   async function dispatchBackend(b) {
     if (b.type === "frontier") {
