@@ -34,6 +34,33 @@ LlamaFleet uses GGUF models via `llama-server` directly — no LM Studio or Olla
 
 ---
 
+## Cut AI Coding Tool Costs
+
+AI coding assistants — GitHub Copilot, Cursor, Continue, Cline, opencode — have largely moved from flat-rate plans to **usage-based billing**. For developers running agentic workflows, costs can multiply fast: every tool-call round-trip (bash execution, file read, web fetch) is a separate billed request to the frontier API, and a single agentic session can involve dozens of them before the model gives a final answer.
+
+LlamaFleet's orchestration routing intercepts these requests at the `base_url` level before they reach the frontier API. Route the **repetitive tool-loop turns** to a local GPU model, and reserve the frontier API for the turns where frontier quality actually matters — complex reasoning, final synthesis, architecture decisions, code review.
+
+### What kinds of turns go where
+
+| Turn type | Good candidate for | Why |
+|---|---|---|
+| Bash command execution (`bash`) | **Local model** | The model is reading output, not doing deep reasoning. A 35B local MoE handles this well. |
+| File read / grep / search | **Local model** | Context retrieval, not synthesis. |
+| Web fetch / docs lookup | **Local model** | Parsing and summarizing a page. |
+| Initial question / final answer | **Frontier API** | Where quality matters most. |
+| Architecture review, complex debugging | **Frontier API** | When you actually need the frontier model. |
+| Short completions, boilerplate | **Local model** | Speed over quality; no meaningful difference. |
+
+### Why this works
+
+In a typical agentic coding session, the model spends the majority of its turns in a tool loop — running a command, reading output, deciding what to do next. These turns are billed the same as a hard reasoning question but require far less model capability. A capable local model (Qwen3-35B, Llama-3 70B Q4, etc.) handles tool-loop turns with the same functional accuracy as a frontier model, at near-zero marginal cost.
+
+LlamaFleet's `toolCalledContains` condition detects when the model is **actively mid-loop** (the last assistant message contains a tool call) and routes that turn locally. The moment the model gives a final text answer with no tool calls, the condition resets and the next request goes back to the frontier — so you get frontier quality exactly when the conversation needs it.
+
+See [Orchestration Routing](#orchestration-routing) for a step-by-step setup.
+
+---
+
 ## Why LlamaFleet?
 
 All four tools run `llama.cpp` under the hood. The differences are in the ops model — how much control you have over each running process and how you compose them.
@@ -219,18 +246,22 @@ Each rule has one or more conditions (all must match — AND logic):
 
 > **`toolCalledContains` vs `toolNameContains`**: Use `toolCalledContains` to detect active agentic loops. It fires only when the *last* assistant message invoked that tool — meaning the model is mid-loop right now. Once the model gives a final text answer (no `tool_calls` in its last message), the condition resets and the next request falls back to the default backend. `toolNameContains` checks the tools *definition* array, which is the same on every request for clients like opencode that always send all tools.
 
-### Example: local for agentic work, frontier for everything else
+### Example: local for agentic tool loops, frontier for everything else
 
-A typical setup for opencode or similar agentic coding tools:
+A typical setup for GitHub Copilot (agent mode), opencode, Continue, Cursor, or any OpenAI-compatible coding tool:
 
-1. **Create a frontier backend** → Orchestration → Frontier Backends → point it at your OpenAI-compatible API (Copilot, OpenRouter, etc.)
+1. **Create a frontier backend** → Orchestration → Frontier Backends → point it at your provider (GitHub Copilot via `https://api.githubcopilot.com`, OpenRouter, OpenAI, etc.) with your API key stored server-side
 2. **Create an orchestration route** named `OpenCode` (or any name) with:
    - Default backend → your frontier API
    - Rule: `toolCalledContains: bash` → local model
+   - Rule: `toolCalledContains: read_file` → local model
+   - Rule: `toolCalledContains: grep` → local model
    - Rule: `toolCalledContains: webfetch` → local model
-3. Set `base_url = http://host:8081/v1` and `model = OpenCode` in your client
+3. Set `base_url = http://host:8081/v1` and `model = OpenCode` in your editor or tool config
 
-Result: simple questions and code review go to the frontier model; turns where the model is actively running shell commands or fetching pages are handled by the local GPU model.
+Result: initial questions and final answers go to the frontier API; turns where the model is actively executing commands or reading files are handled by the local GPU model — at zero per-request cost. The routing is **automatic and stateless** — every turn is evaluated fresh based on what the model actually did in its last message, so the split happens naturally as the conversation moves between reasoning and action.
+
+**On cost:** if your frontier provider charges per token and you run agentic workflows heavily (the model runs 20–50 tool calls per session), the majority of your token spend is now on turns the local model handles equally well. The frontier API sees only the turns that actually benefit from it.
 
 ### Frontier backends
 
