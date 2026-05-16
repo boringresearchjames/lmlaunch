@@ -2316,7 +2316,7 @@ lf-host-stats {
 .orch-log-table { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .orch-log-header {
   display: grid;
-  grid-template-columns: 24px 56px 1fr 100px 120px 64px 1fr 80px;
+  grid-template-columns: 24px 56px minmax(0, 90px) minmax(0, 110px) minmax(0, 1fr) 72px minmax(0, 1fr) 90px;
   gap: 6px;
   padding: 4px 10px;
   font-size: 11px;
@@ -2335,11 +2335,12 @@ lf-host-stats {
 .orch-log-row-open { border-color: rgba(92,165,255,0.4); }
 .orch-log-row-main {
   display: grid;
-  grid-template-columns: 24px 56px 1fr 100px 120px 64px 1fr 80px;
+  grid-template-columns: 24px 56px minmax(0, 90px) minmax(0, 110px) minmax(0, 1fr) 72px minmax(0, 1fr) 90px;
   gap: 6px;
   align-items: center;
   padding: 6px 10px;
 }
+.orch-log-row-main > span { min-width: 0; overflow: hidden; }
 .orch-log-row-toggle {
   background: none;
   border: none;
@@ -2406,6 +2407,10 @@ lf-host-stats {
   border-radius: 10px;
   font-weight: 600;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
 }
 .orch-badge-default { background: rgba(120,120,120,0.2); color: var(--muted); }
 .orch-badge-rule { background: rgba(92,165,255,0.15); color: #7ec8e3; }

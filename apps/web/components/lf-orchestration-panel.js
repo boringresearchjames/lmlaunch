@@ -263,6 +263,16 @@ class LfOrchestrationPanel extends HTMLElement {
     const t = new Date(e.at);
     const timeStr = `${t.getHours().toString().padStart(2,'0')}:${t.getMinutes().toString().padStart(2,'0')}:${t.getSeconds().toString().padStart(2,'0')}`;
     const ruleClass = e.ruleId === 'default' ? 'orch-badge-default' : 'orch-badge-rule';
+    let ruleLabel = e.ruleId;
+    if (e.ruleId !== 'default') {
+      const route = this._routes.find(r => r.name === e.routeName);
+      if (route) {
+        const idx = route.rules.findIndex(r => r.id === e.ruleId);
+        ruleLabel = idx >= 0 ? `Rule ${idx + 1}` : e.ruleId.slice(-6);
+      } else {
+        ruleLabel = e.ruleId.slice(-6);
+      }
+    }
     const backendType = e.backend?.type || 'unknown';
     const backendLabel = backendType === 'local' ? e.backend.model
       : backendType === 'frontier' ? (this._frontierBackends.find(b => b.id === e.backend?.backendId)?.name || e.backend?.backendId)
@@ -320,8 +330,8 @@ class LfOrchestrationPanel extends HTMLElement {
           <button class="orch-log-row-toggle" data-id="${e.id}" type="button" title="Expand request details">${isExpanded ? '▾' : '▸'}</button>
           <span class="orch-log-time">${timeStr}</span>
           <span><code>${this._esc(e.routeName)}</code></span>
-          <span><span class="orch-badge ${ruleClass}">${this._esc(e.ruleId)}</span></span>
-          <span><span class="orch-badge orch-badge-${backendType}">${this._esc(backendLabel)}</span></span>
+          <span><span class="orch-badge ${ruleClass}" title="${this._esc(e.ruleId)}">${this._esc(ruleLabel)}</span></span>
+          <span><span class="orch-badge orch-badge-${backendType}" title="${this._esc(backendLabel)}">${this._esc(backendLabel)}</span></span>
           <span>${e.latencyMs}ms</span>
           <span class="orch-log-meta">
             ${e.toolsPresent ? `<span class="orch-chip">🔧 ${e.toolCount}</span>` : ''}
