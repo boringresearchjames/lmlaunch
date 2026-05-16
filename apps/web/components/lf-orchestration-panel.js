@@ -628,6 +628,28 @@ class LfOrchestrationPanel extends HTMLElement {
     if (!el) return;
     const nullOption = allowNull ? '<option value="">None</option>' : '';
 
+    // Compute stem for each instance (strip path + extension, same logic as routing.js)
+    const stemOf = (effectiveModel) => {
+      if (!effectiveModel) return null;
+      const base = effectiveModel.replace(/\\/g, '/').split('/').pop();
+      return base.replace(/\.(gguf|bin|safetensors|pt|pth|ggml)$/i, '');
+    };
+
+    // Pools — stems shared by 2+ running instances
+    const stemGroups = new Map();
+    for (const inst of this._runningInstances) {
+      const stem = stemOf(inst.effectiveModel);
+      if (!stem) continue;
+      if (!stemGroups.has(stem)) stemGroups.set(stem, []);
+      stemGroups.get(stem).push(inst);
+    }
+    const poolOptions = [...stemGroups.entries()]
+      .filter(([, insts]) => insts.length >= 2)
+      .map(([stem, insts]) => {
+        const isSelected = currentBackend?.type === 'local' && currentBackend?.model === stem;
+        return `<option value="local::${this._esc(stem)}" ${isSelected ? 'selected' : ''}>⇄ ${this._esc(stem)} (${insts.length} inst · least-loaded)</option>`;
+      }).join('');
+
     // Running instances — deduplicated by route name, show profile + GPU + state
     const seenRoutes = new Set();
     const runningOptions = this._runningInstances.map(inst => {
@@ -654,6 +676,7 @@ class LfOrchestrationPanel extends HTMLElement {
     el.innerHTML = `
       <select class="orch-select orch-backend-select">
         ${nullOption}
+        ${poolOptions ? `<optgroup label="Pools">${poolOptions}</optgroup>` : ''}
         ${runningOptions
           ? `<optgroup label="Running Instances">${runningOptions}</optgroup>`
           : `<option disabled>(no instances running)</option>`}
