@@ -11,6 +11,124 @@ let isSending = false;
 
 const $ = (id) => document.getElementById(id);
 
+// ── Markdown renderer ────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderInline(s) {
+  s = escHtml(s);
+  s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
+  s = s.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
+  return s;
+}
+
+function renderMarkdown(text) {
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trimEnd();
+
+    // Fenced code block
+    if (/^```/.test(line)) {
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { codeLines.push(lines[i]); i++; }
+      i++;
+      out.push(`<pre class="md-pre"><code>${escHtml(codeLines.join('\n'))}</code></pre>`);
+      continue;
+    }
+
+    // Table: header row followed by a separator (dashes/pipes/colons)
+    if (line.includes('|') && i + 1 < lines.length && /^[\s|:\-]+$/.test(lines[i + 1])) {
+      const parseRow = (r) => {
+        const parts = r.split('|').map(c => c.trim());
+        // Strip empty leading/trailing cells produced by surrounding pipes
+        if (parts[0] === '') parts.shift();
+        if (parts[parts.length - 1] === '') parts.pop();
+        return parts;
+      };
+      const headers = parseRow(line);
+      i += 2;
+      let tbl = '<table class="md-table"><thead><tr>';
+      headers.forEach(h => { tbl += `<th>${renderInline(h)}</th>`; });
+      tbl += '</tr></thead><tbody>';
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') {
+        const cells = parseRow(lines[i]);
+        tbl += '<tr>';
+        cells.forEach(c => { tbl += `<td>${renderInline(c)}</td>`; });
+        tbl += '</tr>';
+        i++;
+      }
+      tbl += '</tbody></table>';
+      out.push(tbl);
+      continue;
+    }
+
+    // Heading
+    const hm = line.match(/^(#{1,3}) (.+)/);
+    if (hm) {
+      const lv = hm[1].length;
+      out.push(`<h${lv} class="md-h md-h${lv}">${renderInline(hm[2])}</h${lv}>`);
+      i++; continue;
+    }
+
+    // Horizontal rule
+    if (/^(---|\*\*\*|___)\s*$/.test(line)) {
+      out.push('<hr class="md-hr">');
+      i++; continue;
+    }
+
+    // Blockquote
+    if (/^> /.test(line)) {
+      out.push(`<blockquote class="md-blockquote">${renderInline(line.slice(2))}</blockquote>`);
+      i++; continue;
+    }
+
+    // Unordered list
+    if (/^\s*[*\-+] /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[*\-+] /.test(lines[i])) {
+        items.push(renderInline(lines[i].replace(/^\s*[*\-+] /, '')));
+        i++;
+      }
+      out.push(`<ul class="md-list">${items.map(x => `<li>${x}</li>`).join('')}</ul>`);
+      continue;
+    }
+
+    // Ordered list
+    if (/^\d+\. /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\. /.test(lines[i])) {
+        items.push(renderInline(lines[i].replace(/^\d+\. /, '')));
+        i++;
+      }
+      out.push(`<ol class="md-list">${items.map(x => `<li>${x}</li>`).join('')}</ol>`);
+      continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') {
+      if (out.length && out[out.length - 1] !== '<div class="md-gap"></div>') {
+        out.push('<div class="md-gap"></div>');
+      }
+      i++; continue;
+    }
+
+    // Plain line
+    out.push(`<div class="md-line">${renderInline(line)}</div>`);
+    i++;
+  }
+  return out.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function toast(msg) {
   $('toast')?.notify(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }
@@ -158,7 +276,7 @@ export async function sendInstanceDiagnosticPrompt() {
     }
 
     if (!accumulated) accumulated = '(empty response)';
-    if (bubble) bubble.textContent = accumulated;
+    if (bubble) bubble.innerHTML = renderMarkdown(accumulated);
     chatHistory.push({ role: 'assistant', content: accumulated });
     scrollToBottom();
   } catch (error) {
