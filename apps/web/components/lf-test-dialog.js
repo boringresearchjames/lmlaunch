@@ -122,7 +122,7 @@ export async function sendInstanceDiagnosticPrompt() {
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: modelId, messages, temperature: 0.7, max_tokens: 1024, stream: true })
+      body: JSON.stringify({ model: modelId, messages, temperature: 0.7, stream: true })
     });
 
     if (!response.ok) {
