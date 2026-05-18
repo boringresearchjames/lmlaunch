@@ -22,6 +22,7 @@ function scrollToBottom() {
 
 /**
  * Append a chat bubble. Returns the bubble content element for incremental streaming updates.
+ * Pass text=null to show the typing indicator instead of text.
  */
 function appendMessage(role, text) {
   const msgs = $('instanceTestMessages');
@@ -33,7 +34,11 @@ function appendMessage(role, text) {
   label.textContent = role === 'user' ? 'You' : 'Assistant';
   const bubble = document.createElement('div');
   bubble.className = 'chat-msg-bubble';
-  bubble.textContent = text;
+  if (text === null) {
+    bubble.innerHTML = '<span class="chat-typing"><span></span><span></span><span></span></span>';
+  } else {
+    bubble.textContent = text;
+  }
   wrap.appendChild(label);
   wrap.appendChild(bubble);
   msgs.appendChild(wrap);
@@ -98,7 +103,7 @@ export async function sendInstanceDiagnosticPrompt() {
   appendMessage('user', userContent);
   chatHistory.push({ role: 'user', content: userContent });
 
-  const bubble = appendMessage('assistant', '▋');
+  const bubble = appendMessage('assistant', null);
 
   isSending = true;
   if (sendBtn) sendBtn.disabled = true;
@@ -145,7 +150,7 @@ export async function sendInstanceDiagnosticPrompt() {
           const delta = chunk.choices?.[0]?.delta?.content;
           if (typeof delta === 'string') {
             accumulated += delta;
-            if (bubble) bubble.textContent = accumulated || '▋';
+            if (bubble) bubble.textContent = accumulated;
             scrollToBottom();
           }
         } catch { /* ignore bad JSON */ }
